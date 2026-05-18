@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, message=F, warning=F}
-knitr::opts_chunk$set(echo = TRUE, fig.width = 8)
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, message=F, warning=F)
 
 setwd("~/GitHub/ddot-project-evals")
 
@@ -118,18 +118,21 @@ injury_vars <- c(
 
 cd <- select(cd, CRIMEID, year, month, injury_vars)
 ```
-
-
-
-Plan:
+rough plan:
 
 * get 10 meter buffer around every individual road segment
 * count the number of crashes in each buffered segment in each year
-  * if crashes fall into multiple buffers, assign them to a single buffer randomly
-* merge on which segments had PBLs installed
+  * if crashes fall into multiple buffers, assign them to a single buffer randomly. this adds noise and will attenuate the "treatment effect"
+* merge on which segments had PBLs & buffered bike lanes installed
 
-* run regression that compares crash numbers per year, controlling for area, pre-install crashes, road width, speed limit, etc.
-* compare simple before and after means on PBL & non-PBL segments
+* run regression that compares crash numbers per year, controlling for area, pre-install crashes, road width, bike traffic from Cabi system, etc
+* compare simple before and after means on PBL/BBL & non-PBL/BBL segments
+
+# TODO:
+
+* fix PBL/BBL labeling so it doesn't suck lol
+
+
 
 
 ```{r}
@@ -309,11 +312,11 @@ pbl <- st_read("bike_lanes_labeled.geojson") %>%
   # ugh gotta add back missing subblocks wtf qgis
   add_row(SUBBLOCKKE="22ef82997ee696dd668ca7f21c7ab4ac", build_year=2023, ROUTENAME="39TH ST NW") |>
   add_row(SUBBLOCKKE="1175ddbdaed945393b93d8501a034559", build_year=2023, ROUTENAME="39TH ST NW") |>
-  add_row(SUBBLOCKKE="a914485d49b99b00499ac25f4cfa3e55", build_year=2023, ROUTENAME="39TH ST NW") |>
-  add_row(SUBBLOCKKE="22ef82997ee696dd668ca7f21c7ab4ac", build_year=2023, ROUTENAME="blank") |>
-  add_row(SUBBLOCKKE="22ef82997ee696dd668ca7f21c7ab4ac", build_year=2023, ROUTENAME="blank") |>
-  add_row(SUBBLOCKKE="22ef82997ee696dd668ca7f21c7ab4ac", build_year=2023, ROUTENAME="blank") |>
-  add_row(SUBBLOCKKE="22ef82997ee696dd668ca7f21c7ab4ac", build_year=2023, ROUTENAME="blank") |>
+  add_row(SUBBLOCKKE="a914485d49b99b00499ac25f4cfa3e55", build_year=2023, ROUTENAME="39TH ST NW") #|>
+  # add_row(SUBBLOCKKE="22ef82997ee696dd668ca7f21c7ab4ac", build_year=2023, ROUTENAME="blank") |>
+  # add_row(SUBBLOCKKE="22ef82997ee696dd668ca7f21c7ab4ac", build_year=2023, ROUTENAME="blank") |>
+  # add_row(SUBBLOCKKE="22ef82997ee696dd668ca7f21c7ab4ac", build_year=2023, ROUTENAME="blank") |>
+  # add_row(SUBBLOCKKE="22ef82997ee696dd668ca7f21c7ab4ac", build_year=2023, ROUTENAME="blank") |>
 
 
 # load all roadway sub-block data, from here:
@@ -347,15 +350,14 @@ rs_crash_buf <-
   rs |>
   st_transform(6487) |>          # EPSG:6487 — NAD83 / Maryland (metres)
   st_buffer(10) |>               # X m buffer
-  st_transform(st_crs(cd))       # reproject back to match cd's CRS
-
-rs_buf <- select(rs_crash_buf, 
-                 ROUTEID, ROUTENAME, BLOCKKEY, SUBBLOCKKEY, 
-                 TOTALTRAVELLANES, TOTALPARKINGLANES, TOTALTRAVELLANEWIDTH,
-                 WARD_ID, DCFUNCTIONALCLASS
-                 ) %>%
+  st_transform(st_crs(cd)) |>    # reproject back to match cd's CRS
+  select(ROUTEID, ROUTENAME, BLOCKKEY, SUBBLOCKKEY, 
+         TOTALTRAVELLANES, TOTALPARKINGLANES, TOTALTRAVELLANEWIDTH,
+         WARD_ID, DCFUNCTIONALCLASS
+         ) %>%
   mutate(area_m = st_area(.))
 
+units(rs_crash_buf$area_m) <- NULL
 # Join crashes to buffers — one crash can match multiple buffers
 cd_joined <- cd |> st_join(rs_crash_buf, join = st_within, left = FALSE)
 
@@ -366,11 +368,10 @@ cd_assigned <- cd_joined |>
   slice_sample(n = 1) |>         # randomly pick one buffer per crash
   ungroup()
 
-units(cd_assigned$area_m) <- NULL
+
 
 cd_assigned_clean <-
   cd_assigned %>%
-  mutate(speed_limit = as.numeric(speed_limit)) %>%
   mutate(WARD_ID = as.numeric(WARD_ID)) %>%
   group_by(SUBBLOCKKEY, year) %>%
   summarise(
@@ -495,28 +496,28 @@ cd_pbl_clean <- cd_pbl_clean %>%
 
 cd_pbl_clean <- dplyr::left_join(cd_pbl_clean, rs_cabi_change, by="SUBBLOCKKEY")
 
-run_regs <- function(df, outcome, include_year=T) {
-  root_reg <- paste0(outcome, " ~ treatment + post_install + treatment*post_install")
-  print(summary(lm(formula = as.formula(root_reg), data = df)))
-  cat("\n****************************************************")
-  print(summary(lm(formula = as.formula(paste0(root_reg, " + mean_crashes_pre2019")), data = df)))
-  cat("\n****************************************************")
-  print(summary(lm(formula = as.formula(paste0(root_reg, " + mean_crashes_pre2019", ifelse(include_year, " + as.factor(year)", ""))), data = df)))
-  cat("\n****************************************************")
-  print(summary(lm(formula = as.formula(
-    paste0(root_reg, " + mean_crashes_pre2019 + TOTALTRAVELLANEWIDTH + TOTALPARKINGLANES + as.factor(WARD_ID) + as.factor(DCFUNCTIONALCLASS) + total_change_trips",
-           ifelse(include_year, " + as.factor(year)", ""))), 
-    data = df)))
-}
+# run_regs <- function(df, outcome, include_year=T) {
+#   root_reg <- paste0(outcome, " ~ treatment + post_install + treatment*post_install")
+#   print(summary(lm(formula = as.formula(root_reg), data = df)))
+#   cat("\n****************************************************")
+#   print(summary(lm(formula = as.formula(paste0(root_reg, " + mean_crashes_pre2019")), data = df)))
+#   cat("\n****************************************************")
+#   print(summary(lm(formula = as.formula(paste0(root_reg, " + mean_crashes_pre2019", ifelse(include_year, " + as.factor(year)", ""))), data = df)))
+#   cat("\n****************************************************")
+#   print(summary(lm(formula = as.formula(
+#     paste0(root_reg, " + mean_crashes_pre2019 + TOTALTRAVELLANEWIDTH + TOTALPARKINGLANES + as.factor(WARD_ID) + as.factor(DCFUNCTIONALCLASS) + total_change_trips",
+#            ifelse(include_year, " + as.factor(year)", ""))), 
+#     data = df)))
+# }
 
-run_regs(df = cd_pbl_clean, outcome = "crashes_per_acre")
-run_regs(df = cd_pbl_clean, outcome = "injury_crashes_per_acre")
-run_regs(df = cd_pbl_clean, outcome = "driver_injury_crashes_per_acre")
-run_regs(df = cd_pbl_clean, outcome = "serious_driver_injury_crashes_per_acre")
-run_regs(df = cd_pbl_clean, outcome = "bike_injury_crashes_per_acre")
-run_regs(df = cd_pbl_clean, outcome = "serious_bike_injury_crashes_per_acre")
-run_regs(df = cd_pbl_clean, outcome = "ped_injury_crashes_per_acre")
-run_regs(df = cd_pbl_clean, outcome = "serious_ped_injury_crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "injury_crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "driver_injury_crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "serious_driver_injury_crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "bike_injury_crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "serious_bike_injury_crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "ped_injury_crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "serious_ped_injury_crashes_per_acre")
 
 
 cd_pbl_clean_simplified <-
@@ -540,14 +541,14 @@ cd_pbl_clean_simplified <-
 
 
 
-run_regs(df = cd_pbl_clean_simplified, outcome = "crashes_per_acre", F)
-run_regs(df = cd_pbl_clean_simplified, outcome = "injury_crashes_per_acre", F)
-run_regs(df = cd_pbl_clean_simplified, outcome = "driver_injury_crashes_per_acre", F)
-run_regs(df = cd_pbl_clean_simplified, outcome = "serious_driver_injury_crashes_per_acre", F)
-run_regs(df = cd_pbl_clean_simplified, outcome = "bike_injury_crashes_per_acre", F)
-run_regs(df = cd_pbl_clean_simplified, outcome = "serious_bike_injury_crashes_per_acre", F)
-run_regs(df = cd_pbl_clean_simplified, outcome = "ped_injury_crashes_per_acre", F)
-run_regs(df = cd_pbl_clean_simplified, outcome = "serious_ped_injury_crashes_per_acre", F)
+# run_regs(df = cd_pbl_clean_simplified, outcome = "crashes_per_acre", F)
+# run_regs(df = cd_pbl_clean_simplified, outcome = "injury_crashes_per_acre", F)
+# run_regs(df = cd_pbl_clean_simplified, outcome = "driver_injury_crashes_per_acre", F)
+# run_regs(df = cd_pbl_clean_simplified, outcome = "serious_driver_injury_crashes_per_acre", F)
+# run_regs(df = cd_pbl_clean_simplified, outcome = "bike_injury_crashes_per_acre", F)
+# run_regs(df = cd_pbl_clean_simplified, outcome = "serious_bike_injury_crashes_per_acre", F)
+# run_regs(df = cd_pbl_clean_simplified, outcome = "ped_injury_crashes_per_acre", F)
+# run_regs(df = cd_pbl_clean_simplified, outcome = "serious_ped_injury_crashes_per_acre", F)
 ```
 
 
@@ -695,31 +696,31 @@ ggplot(summary_df, aes(x = post_install, y = mean,
 
 ```{r}
 
-# Get unique treated subblock keys
-treated_keys <- cd_pbl_clean_simplified |>
-  filter(treatment == 1) |>
-  distinct(SUBBLOCKKEY)
-
-# Merge onto rs geometry
-rs_treatment <- rs |>
-  inner_join(treated_keys, by = "SUBBLOCKKEY")
-
-# Plot
-leaflet(rs_treatment |> st_zm(drop = TRUE)) |>
-  addProviderTiles(providers$CartoDB.Positron) |>
-  addPolylines(
-    color   = "#4575b4",
-    weight  = 2.5,
-    opacity = 0.85,
-    label   = ~SUBBLOCKKEY,
-    labelOptions = labelOptions(textsize = "12px", direction = "auto"),
-    highlightOptions = highlightOptions(
-      weight      = 7,
-      color       = "#222222",
-      opacity     = 1,
-      bringToFront = TRUE
-    )
-  )
+# # Get unique treated subblock keys
+# treated_keys <- cd_pbl_clean_simplified |>
+#   filter(treatment == 1) |>
+#   distinct(SUBBLOCKKEY)
+# 
+# # Merge onto rs geometry
+# rs_treatment <- rs |>
+#   inner_join(treated_keys, by = "SUBBLOCKKEY")
+# 
+# # Plot
+# leaflet(rs_treatment |> st_zm(drop = TRUE)) |>
+#   addProviderTiles(providers$CartoDB.Positron) |>
+#   addPolylines(
+#     color   = "#4575b4",
+#     weight  = 2.5,
+#     opacity = 0.85,
+#     label   = ~SUBBLOCKKEY,
+#     labelOptions = labelOptions(textsize = "12px", direction = "auto"),
+#     highlightOptions = highlightOptions(
+#       weight      = 7,
+#       color       = "#222222",
+#       opacity     = 1,
+#       bringToFront = TRUE
+#     )
+#   )
 
 ```
 
