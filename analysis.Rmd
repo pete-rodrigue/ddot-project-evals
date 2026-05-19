@@ -426,7 +426,18 @@ cd_pbl_clean <-
 
 cd_pbl_clean <- dplyr::left_join(cd_pbl_clean, rs_cabi_change, by="SUBBLOCKKEY")
 
-run_regs <- function(df, outcome, include_year=T) {
+# add very rough CaBi numbers by year:
+annual_cabi_rides <-
+  data.frame(
+    "year"       = c(2016, 2017, 2018, 2019, 2024, 2025),
+    "cabi_rides" = c(3.5 , 3.8 , 3.4 , 3.4 , 6.1 , 6.6)
+    )
+
+cd_pbl_clean <- dplyr::left_join(cd_pbl_clean, annual_cabi_rides, by="year")
+
+run_regs <- function(df, outcome, include_year=T, return_mod=F) {
+  print(paste("############### ", outcome))
+  print("################################")
   root_reg <- paste0(outcome, " ~ treatment + post_install + treatment*post_install")
   print(summary(lm(formula = as.formula(root_reg), data = df)))
   cat("\n****************************************************")
@@ -435,21 +446,29 @@ run_regs <- function(df, outcome, include_year=T) {
   print(summary(lm(formula = as.formula(paste0(root_reg, " + mean_crashes_pre2019", 
         ifelse(include_year, " + as.factor(year)", ""))), data = df)))
   cat("\n****************************************************")
-  print(summary(lm(formula = as.formula(
+  full_mod <- lm(formula = as.formula(
     paste0(root_reg, " + mean_crashes_pre2019 + TOTALTRAVELLANEWIDTH + TOTALPARKINGLANES ",
-          "+ as.factor(WARD_ID) + as.factor(DCFUNCTIONALCLASS) + total_change_trips",
+          "+ as.factor(WARD_ID) + as.factor(DCFUNCTIONALCLASS) + total_change_trips + cabi_rides",
            ifelse(include_year, " + as.factor(year)", ""))),
-    data = df)))
+    data = df)
+  print(summary(full_mod))
+
+  if (return_mod) {
+    return(full_mod)
+  }
 }
 
-# run_regs(df = cd_pbl_clean, outcome = "crashes_per_acre")
-# run_regs(df = cd_pbl_clean, outcome = "injury_crashes_per_acre")
-# run_regs(df = cd_pbl_clean, outcome = "driver_injury_crashes_per_acre")
-# run_regs(df = cd_pbl_clean, outcome = "serious_driver_injury_crashes_per_acre")
-# run_regs(df = cd_pbl_clean, outcome = "bike_injury_crashes_per_acre")
-# run_regs(df = cd_pbl_clean, outcome = "serious_bike_injury_crashes_per_acre")
-# run_regs(df = cd_pbl_clean, outcome = "ped_injury_crashes_per_acre")
-# run_regs(df = cd_pbl_clean, outcome = "serious_ped_injury_crashes_per_acre")
+run_regs(df = cd_pbl_clean, outcome = "crashes_per_acre")
+run_regs(df = cd_pbl_clean, outcome = "injury_crashes_per_acre")
+run_regs(df = cd_pbl_clean, outcome = "driver_injury_crashes_per_acre")
+run_regs(df = cd_pbl_clean, outcome = "serious_driver_injury_crashes_per_acre")
+run_regs(df = cd_pbl_clean, outcome = "bike_injury_crashes_per_acre")
+run_regs(df = cd_pbl_clean, outcome = "serious_bike_injury_crashes_per_acre")
+run_regs(df = cd_pbl_clean, outcome = "ped_injury_crashes_per_acre")
+run_regs(df = cd_pbl_clean, outcome = "serious_ped_injury_crashes_per_acre")
+
+to_plot <- run_regs(df = cd_pbl_clean, outcome = "injury_crashes_per_acre", return_mod=T)
+plot(to_plot)
 
 cd_pbl_clean_simplified <-
   cd_pbl_clean %>%
