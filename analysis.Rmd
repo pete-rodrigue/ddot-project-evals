@@ -104,7 +104,7 @@ DDOT looked at a few projects in depth. But we can also use DC's crash data to l
 # load crash data
 # data downloaded from here:
 # https://opendata.dc.gov/datasets/crashes-in-dc/about
-cd <- readr::read_csv("Crashes_in_DC.csv")
+cd <- readr::read_csv("data/Crashes_in_DC.csv")
 
 # create year and month of crash variables:
 cd$year  <- as.numeric(substr(x = cd$REPORTDATE, start = 1, stop = 4))
@@ -115,6 +115,8 @@ cd <- filter(cd, !is.na(year))
 
 # this data has crashes going back to the 2000s, but the data doesn't look super complete until 2014 or so:
 # table(cd$year)
+# According to DDOT, the location information in the data set became much more accurate starting in 2016:
+# https://ddotwiki.atlassian.net/wiki/spaces/GIS0225/pages/2053603429/Crash+Data
 ```
 
 ```{r}
@@ -139,8 +141,11 @@ cd <- select(cd, CRIMEID, year, month, injury_vars)
 ```{r}
 # load labeled PBL data that has the road subblock IDs and the year in which 
 # PBLs were installed on those subblocks (we hand labeled them)
-pbl <- st_read("labeled_bike_lanes/Protected-Buffered-Bike-Lanes-labeled.geojson", quiet=T) %>%
-  filter(!is.na(install_year)) %>% rename(build_year = install_year) #%>%
+pbl <- 
+  st_read("data/Protected-Buffered-Bike-Lanes.geojson", quiet=T) %>%
+  filter(!is.na(install_year)) %>% 
+  filter(install_year != 99) %>%
+  rename(build_year = install_year) #%>%
   # filter((!is.na(BIKELANE_PROTECTED)) | (!is.na(BIKELANE_DUAL_PROTECTED)))
 ```
 
@@ -152,7 +157,7 @@ pbl <- st_read("labeled_bike_lanes/Protected-Buffered-Bike-Lanes-labeled.geojson
 # source("clean_cabi_data.R")
 
 # otherwise just load the cleaned data:
-cabi <- readr::read_csv("cabi_both_years_clean.csv")
+cabi <- readr::read_csv("data/cabi_both_years_clean.csv")
 
 cabi <-
   cabi |>
@@ -223,7 +228,7 @@ what we'll do:
 # https://opendata.dc.gov/datasets/df571ab7fea446e396bf2862d0ab6833_162/explore?location=38.927746%2C-77.024575%2C18
 # This will be our main data set we merge other data onto.
 rs <- 
-  st_read("Roadway_SubBlock.geojson", quiet=T) %>%
+  st_read("data/Roadway_SubBlock.geojson", quiet=T) %>%
   st_zm(drop = TRUE, what = "ZM") %>%  # drops Z (and M if present) → pure XY
   # Leaflet requires WGS84 (EPSG:4326) — reproject if needed
   st_transform(4326) %>%
@@ -234,7 +239,7 @@ rs <-
 rs_cabi_buf <-
   rs |>
   st_transform(6487) |>          # EPSG:6487 — NAD83 / Maryland (metres)
-  st_buffer(500) |>               # X m buffer
+  st_buffer(500) |>              # X m buffer
   st_transform(st_crs(cd))       # reproject back to match cd's CRS
 
 # Spatial join stations to buffers, then summarise by subblock
@@ -251,10 +256,11 @@ rs_cabi_change <- rs_cabi_buf |>
 
 # OK now let's join the crashes to the subblocks, which we'll do with anther,
 # smaller, X meter buffer:
+rs_radius <- (rs$TOTALPARKINGLANES + rs$TOTALTRAVELLANES)*10 / 2 + 10
 rs_crash_buf <-
   rs |>
   st_transform(6487) |>          # EPSG:6487 — NAD83 / Maryland (metres)
-  st_buffer(10) |>               # X m buffer
+  st_buffer(rs_radius) |>        # X m buffer
   st_transform(st_crs(cd)) |>    # reproject back to match cd's CRS
   select(ROUTEID, ROUTENAME, BLOCKKEY, SUBBLOCKKEY, 
          TOTALTRAVELLANES, TOTALPARKINGLANES, TOTALTRAVELLANEWIDTH,
@@ -267,13 +273,12 @@ units(rs_crash_buf$area_m) <- NULL
 # Join crashes to buffers — one crash can match multiple buffers, since the buffers can overlap
 cd_joined <- cd |> st_join(rs_crash_buf, join = st_within, left = FALSE)
 
-#TODO: go back and look at this?
 # For crashes in multiple buffers, randomly keep one. this will add noise but that's probably OK.
 cd_assigned <- cd_joined |>
-  st_drop_geometry() |>
-  group_by(CRIMEID) |>           # replace crash_id with whatever your unique crash ID column is
-  slice_sample(n = 1) |>         # randomly pick one buffer per crash
-  ungroup()
+  st_drop_geometry() #|>
+  # group_by(CRIMEID) |>           
+  # slice_sample(n = 1) |>         # randomly pick one buffer per crash
+  # ungroup()
 
 
 # count up the number of crashes in each subblock
@@ -289,7 +294,7 @@ cd_assigned_clean <-
     TOTALTRAVELLANEWIDTH = first(TOTALTRAVELLANEWIDTH),
     WARD_ID              = first(WARD_ID),
     DCFUNCTIONALCLASS    = first(DCFUNCTIONALCLASS),
-    area_m               = mean(area_m, na.rm=T),
+    area_m               = first(area_m),
     .groups   = "drop"
   ) %>%
   ungroup() %>%
@@ -299,7 +304,7 @@ cd_assigned_clean <-
   mutate(across(where(is.numeric), ~ ifelse(is.nan(.), NA, .)))
 
 # subset to real years:
-cd_assigned_clean <- filter(cd_assigned_clean, (year >= 2015) & (year <= 2025))
+cd_assigned_clean <- filter(cd_assigned_clean, (year > 2015) & (year <= 2025))
 
 # ensures the data frame is a balanced panel
 # i.e., that every subblock has a row for every year from 2015 to 2025, with no gaps.
@@ -356,7 +361,7 @@ cd_pbl_clean <-
 # Our last 2 years (2024 and 2025) will serve as our post-treatment years for most subblocks.
 cd_pbl_clean <- cd_pbl_clean %>%
   mutate(build_year = if_else(build_year == 99, NA, build_year)) %>%
-  filter(year %in% c(2015, 2016, 2017, 2018, 2019, 2024, 2025)) %>%
+  filter(year %in% c(2016, 2017, 2018, 2019, 2024, 2025)) %>%
   mutate(post_install = if_else((year > 2023) | (year >= build_year), 1, 0)) 
 
 cd_pbl_clean$post_install[(cd_pbl_clean$year >= 2024) & is.na(cd_pbl_clean$build_year)] <- 1
@@ -427,10 +432,12 @@ run_regs <- function(df, outcome, include_year=T) {
   cat("\n****************************************************")
   print(summary(lm(formula = as.formula(paste0(root_reg, " + mean_crashes_pre2019")), data = df)))
   cat("\n****************************************************")
-  print(summary(lm(formula = as.formula(paste0(root_reg, " + mean_crashes_pre2019", ifelse(include_year, " + as.factor(year)", ""))), data = df)))
+  print(summary(lm(formula = as.formula(paste0(root_reg, " + mean_crashes_pre2019", 
+        ifelse(include_year, " + as.factor(year)", ""))), data = df)))
   cat("\n****************************************************")
   print(summary(lm(formula = as.formula(
-    paste0(root_reg, " + mean_crashes_pre2019 + TOTALTRAVELLANEWIDTH + TOTALPARKINGLANES + as.factor(WARD_ID) + as.factor(DCFUNCTIONALCLASS) + total_change_trips",
+    paste0(root_reg, " + mean_crashes_pre2019 + TOTALTRAVELLANEWIDTH + TOTALPARKINGLANES ",
+          "+ as.factor(WARD_ID) + as.factor(DCFUNCTIONALCLASS) + total_change_trips",
            ifelse(include_year, " + as.factor(year)", ""))),
     data = df)))
 }
