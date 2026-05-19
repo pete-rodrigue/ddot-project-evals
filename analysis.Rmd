@@ -5,6 +5,9 @@ date: "`r Sys.Date()`"
 output: html_document
 ---
 
+
+DDOT conducts evaluations of their bus priority and bike infrastruture projects. Here's a summary of what those evaluations have found.
+
 ```{r setup, message=F, warning=F}
 knitr::opts_chunk$set(echo = TRUE, fig.width = 8, message=F, warning=F)
 
@@ -89,6 +92,13 @@ ggplot(to_plot) +
 ```
 
 
+```{r}
+rm(df); rm(to_plot); rm(url)
+```
+
+<br><br>
+
+DDOT looked at a few projects in depth. But we can also use DC's crash data to look at every protected and buffered bike lane in DDOT's "bike lane" shapefile.
 
 ```{r}
 # load crash data
@@ -103,6 +113,11 @@ cd$month <- as.numeric(substr(x = cd$REPORTDATE, start = 6, stop = 7))
 # remove rows with no date information:
 cd <- filter(cd, !is.na(year))
 
+# this data has crashes going back to the 2000s, but the data doesn't look super complete until 2014 or so:
+# table(cd$year)
+```
+
+```{r}
 # project crash data:
 cd <- cd |>
   st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = 4326)
@@ -113,140 +128,30 @@ injury_vars <- c(
   "MAJORINJURIES_DRIVER",      "MINORINJURIES_DRIVER",
   "UNKNOWNINJURIES_DRIVER",    "FATAL_DRIVER",
   "MAJORINJURIES_PEDESTRIAN",  "MINORINJURIES_PEDESTRIAN",
-  "UNKNOWNINJURIES_PEDESTRIAN","FATAL_PEDESTRIAN"
+  "UNKNOWNINJURIES_PEDESTRIAN","FATAL_PEDESTRIAN",
+  "TOTAL_VEHICLES", "TOTAL_BICYCLES", "TOTAL_PEDESTRIANS"
 )
 
 cd <- select(cd, CRIMEID, year, month, injury_vars)
 ```
-rough plan:
 
-* get 10 meter buffer around every individual road segment
-* count the number of crashes in each buffered segment in each year
-  * if crashes fall into multiple buffers, assign them to a single buffer randomly. this adds noise and will attenuate the "treatment effect"
-* merge on which segments had PBLs & buffered bike lanes installed
 
-* run regression that compares crash numbers per year, controlling for area, pre-install crashes, road width, bike traffic from Cabi system, etc
-* compare simple before and after means on PBL/BBL & non-PBL/BBL segments
-
-# TODO:
-
-* fix PBL/BBL labeling so it doesn't suck lol
+```{r}
+# load labeled PBL data that has the road subblock IDs and the year in which 
+# PBLs were installed on those subblocks (we hand labeled them)
+pbl <- st_read("labeled_bike_lanes/Protected-Buffered-Bike-Lanes-labeled.geojson", quiet=T) %>%
+  filter(!is.na(install_year)) %>% rename(build_year = install_year) #%>%
+  # filter((!is.na(BIKELANE_PROTECTED)) | (!is.na(BIKELANE_DUAL_PROTECTED)))
+```
 
 
 
 
 ```{r}
+# go to this other file to download and clean the Cabi data if you need to:
+# source("clean_cabi_data.R")
 
-# Downloads and row binds Capital Bikeshare trip data for a given year,
-# returning a data frame with all the data from that year.
-#
-# Data source: https://capitalbikeshare.com/system-data
-# Note: CaBi publishes one zip file per month containing a CSV of individual
-# trips. 
-# Args: year (int): The calendar year to retrieve data for (e.g. 2023).
-# Returns: A tibble with one row per trip
-#
-# Example: cabi_2023 <- get_annual_cabi_data(2025)
-  
-get_annual_cabi_data <- function(year) {
-
-  # Build one URL per month using CaBi's S3 naming convention:
-  # YYYYMM-capitalbikeshare-tripdata.zip
-  urls <- sprintf(
-    "https://s3.amazonaws.com/capitalbikeshare-data/%d%02d-capitalbikeshare-tripdata.zip",
-    year, 1:12
-  )
-
-  trips <- map(urls, \(url) {
-
-    # Use a unique temp file and directory per month to avoid
-    # collisions when running in parallel or across multiple calls
-    tmp   <- tempfile(fileext = ".zip")
-    exdir <- tempfile()
-    dir.create(exdir)
-
-    tryCatch({
-
-      download.file(url, tmp, mode = "wb", quiet = TRUE)
-      unzip(tmp, exdir = exdir)
-
-      # Some months nest CSVs inside subdirectories within the zip,
-      # so use recursive = TRUE to find them wherever they land
-      csv_files <- list.files(exdir, pattern = "\\.csv$",
-                              full.names = TRUE, recursive = TRUE)
-
-      # Some months ship multiple CSVs (one per week); bind them all
-      map_dfr(csv_files, read_csv, show_col_types = FALSE)
-
-    }, error = \(e) {
-      # Silently skip months that don't exist yet (e.g. future months)
-      # or fail to download, but surface the error message for debugging
-      message("Failed to retrieve: ", url, "\n", e$message)
-      NULL
-    })
-
-  }) |>
-    compact() |>   # drop NULLs from failed months
-    bind_rows()
-  
-  trips
-}
-
-# download all the trip data:
-# raw_cabi_2025 <- get_annual_cabi_data(2025)
-# raw_cabi_2018 <- get_annual_cabi_data(2018)
-
-# Aggregate to station level, keeping location coordinates for
-  # spatial joining downstream
-# cabi_2025 <-
-#   raw_cabi_2025 |>
-#   filter(!is.na(end_station_id)) |>
-#   group_by(end_station_id, end_lat, end_lng) |>
-#   summarise(n_trips_ended = n(), .groups = "drop") |>
-#   arrange(desc(n_trips_ended))
-
-# write.csv(x = cabi_2025, file = "cabi_data_2025.csv", row.names = F)
-
-# cabi_2018 <-
-#   raw_cabi_2018 |>
-#   filter(!is.na(`End station number`)) |>
-#   group_by(`End station number`) |>
-#   summarise(n_trips_ended = n(), .groups = "drop") |>
-#   arrange(desc(n_trips_ended))
-
-# write.csv(x = cabi_2018, file = "cabi_data_2018.csv", row.names = F)
-
-# cabi_2018 <- readr::read_csv("cabi_data_2018.csv")
-# cabi_2025 <- readr::read_csv("cabi_data_2025.csv")
-# 
-# # merge the 2018 and 2025 data based on the end station ID
-# cabi <- 
-#   dplyr::full_join(
-#     cabi_2018 |>
-#       rename(n_trips_ended_2018 = n_trips_ended)
-#       , 
-#     select(cabi_2025, end_station_id, end_lat, end_lng, n_trips_ended) |>
-#       rename(n_trips_ended_2025 = n_trips_ended)
-#     ,
-#     by = c("End station number"="end_station_id")
-#     )
-# 
-# add_coords <- function(df, station_id, lat_lon) {
-#   
-#   df$end_lat[df$`End station number`==station_id] <- lat_lon[1]
-#   df$end_lng[df$`End station number`==station_id] <- lat_lon[2]
-#   
-#   df
-# }
-# # add lat lon for 2018 stations that were later removed but had at least
-# # 1000 trips end at that station in 2018
-# cabi <- add_coords(cabi, 31613, c(38.88429087871622, -76.99578835580621))
-# cabi <- add_coords(cabi, 31614, c(38.900116296819704, -76.99149861721462))
-# cabi <- add_coords(cabi, 31103, c(38.926263953061635, -77.03661594753648))
-# cabi <- add_coords(cabi, 31008, c(38.8629439551263, -77.05208676187382))
-# 
-# write.csv(cabi, "cabi_both_years_clean.csv", row.names = F)
-
+# otherwise just load the cleaned data:
 cabi <- readr::read_csv("cabi_both_years_clean.csv")
 
 cabi <-
@@ -258,42 +163,39 @@ cabi <-
   ) %>%
   filter(!is.na(end_lat))
 
-
-
-# Diverging palette centered at 0 — red = fewer trips, blue = more trips
-pal <- colorNumeric(
-  palette = "RdBu",
-  domain  = cabi$change_n_trips,
-  reverse = FALSE
-)
-
-leaflet(cabi) |>
-  addProviderTiles(providers$CartoDB.Positron) |>
-  addCircleMarkers(
-    lng          = ~end_lng,
-    lat          = ~end_lat,
-    radius       = 6,
-    color        = "white",
-    weight       = 0.5,
-    fillColor    = ~pal(change_n_trips),
-    fillOpacity  = 0.85,
-    label = ~paste0(
-      "<b>", `End station number`, "</b><br>",
-      "2018 trips: ", scales::comma(n_trips_ended_2018), "<br>",
-      "2025 trips: ", scales::comma(n_trips_ended_2025), "<br>",
-      "Change: ", scales::comma(change_n_trips)
-    ) |> lapply(htmltools::HTML),
-    labelOptions = labelOptions(textsize = "12px", direction = "auto")
-  ) |>
-  addLegend(
-    position = "bottomright",
-    pal      = pal,
-    values   = ~change_n_trips,
-    title    = "Change in<br>annual trips",
-    labFormat = labelFormat(big.mark = ","),
-    opacity  = 0.9
-  ) |>
-  addScaleBar(position = "bottomleft")
+# # Diverging palette centered at 0 — red = fewer trips, blue = more trips
+# pal <- colorNumeric(
+#   palette = "RdBu",
+#   domain  = cabi$change_n_trips,
+#   reverse = FALSE
+# )
+# leaflet(cabi) |>
+#   addProviderTiles(providers$CartoDB.Positron) |>
+#   addCircleMarkers(
+#     lng          = ~end_lng,
+#     lat          = ~end_lat,
+#     radius       = 6,
+#     color        = "white",
+#     weight       = 0.5,
+#     fillColor    = ~pal(change_n_trips),
+#     fillOpacity  = 0.85,
+#     label = ~paste0(
+#       "<b>", `End station number`, "</b><br>",
+#       "2018 trips: ", scales::comma(n_trips_ended_2018), "<br>",
+#       "2025 trips: ", scales::comma(n_trips_ended_2025), "<br>",
+#       "Change: ", scales::comma(change_n_trips)
+#     ) |> lapply(htmltools::HTML),
+#     labelOptions = labelOptions(textsize = "12px", direction = "auto")
+#   ) |>
+#   addLegend(
+#     position = "bottomright",
+#     pal      = pal,
+#     values   = ~change_n_trips,
+#     title    = "Change in<br>annual trips",
+#     labFormat = labelFormat(big.mark = ","),
+#     opacity  = 0.9
+#   ) |>
+#   addScaleBar(position = "bottomleft")
 
 # Convert cabi to sf object
 cabi_sf <- cabi |>
@@ -304,31 +206,31 @@ cabi_sf <- cabi |>
 
 ```
 
-```{r}
-# load labeled PBL data that has the road subblock IDs and the year in which 
-# PBLs were installed on those subblocks
-pbl <- st_read("bike_lanes_labeled.geojson") %>%
-  filter(!is.na(build_year)) %>%
-  # ugh gotta add back missing subblocks wtf qgis
-  add_row(SUBBLOCKKE="22ef82997ee696dd668ca7f21c7ab4ac", build_year=2023, ROUTENAME="39TH ST NW") |>
-  add_row(SUBBLOCKKE="1175ddbdaed945393b93d8501a034559", build_year=2023, ROUTENAME="39TH ST NW") |>
-  add_row(SUBBLOCKKE="a914485d49b99b00499ac25f4cfa3e55", build_year=2023, ROUTENAME="39TH ST NW") #|>
-  # add_row(SUBBLOCKKE="22ef82997ee696dd668ca7f21c7ab4ac", build_year=2023, ROUTENAME="blank") |>
-  # add_row(SUBBLOCKKE="22ef82997ee696dd668ca7f21c7ab4ac", build_year=2023, ROUTENAME="blank") |>
-  # add_row(SUBBLOCKKE="22ef82997ee696dd668ca7f21c7ab4ac", build_year=2023, ROUTENAME="blank") |>
-  # add_row(SUBBLOCKKE="22ef82997ee696dd668ca7f21c7ab4ac", build_year=2023, ROUTENAME="blank") |>
+what we'll do:
 
+* get 10 meter buffer around every individual road segment
+* count the number of crashes in each buffered segment in each year
+  * if crashes fall into multiple buffers, assign them to a single buffer randomly. this adds noise and will attenuate the "treatment effect"
+* merge on which segments had PBLs & buffered bike lanes installed
+
+* run regression that compares crash numbers per year, controlling for area, pre-install crashes, road width, bike traffic from Cabi system, etc
+* compare simple before and after means on PBL/BBL & non-PBL/BBL segments
+
+
+```{r}
 
 # load all roadway sub-block data, from here:
 # https://opendata.dc.gov/datasets/df571ab7fea446e396bf2862d0ab6833_162/explore?location=38.927746%2C-77.024575%2C18
+# This will be our main data set we merge other data onto.
 rs <- 
-  st_read("Roadway_SubBlock.geojson") %>%
+  st_read("Roadway_SubBlock.geojson", quiet=T) %>%
   st_zm(drop = TRUE, what = "ZM") %>%  # drops Z (and M if present) → pure XY
   # Leaflet requires WGS84 (EPSG:4326) — reproject if needed
   st_transform(4326) %>%
   st_cast("MULTILINESTRING") 
 
-
+# create an X meter buffer around each subblock to count the number of nearby 
+# cabi trips
 rs_cabi_buf <-
   rs |>
   st_transform(6487) |>          # EPSG:6487 — NAD83 / Maryland (metres)
@@ -346,6 +248,9 @@ rs_cabi_change <- rs_cabi_buf |>
     .groups = "drop"
   )
 
+
+# OK now let's join the crashes to the subblocks, which we'll do with anther,
+# smaller, X meter buffer:
 rs_crash_buf <-
   rs |>
   st_transform(6487) |>          # EPSG:6487 — NAD83 / Maryland (metres)
@@ -357,11 +262,13 @@ rs_crash_buf <-
          ) %>%
   mutate(area_m = st_area(.))
 
+
 units(rs_crash_buf$area_m) <- NULL
-# Join crashes to buffers — one crash can match multiple buffers
+# Join crashes to buffers — one crash can match multiple buffers, since the buffers can overlap
 cd_joined <- cd |> st_join(rs_crash_buf, join = st_within, left = FALSE)
 
-# For crashes in multiple buffers, randomly keep one
+#TODO: go back and look at this?
+# For crashes in multiple buffers, randomly keep one. this will add noise but that's probably OK.
 cd_assigned <- cd_joined |>
   st_drop_geometry() |>
   group_by(CRIMEID) |>           # replace crash_id with whatever your unique crash ID column is
@@ -369,7 +276,7 @@ cd_assigned <- cd_joined |>
   ungroup()
 
 
-
+# count up the number of crashes in each subblock
 cd_assigned_clean <-
   cd_assigned %>%
   mutate(WARD_ID = as.numeric(WARD_ID)) %>%
@@ -391,11 +298,15 @@ cd_assigned_clean <-
   ) %>%
   mutate(across(where(is.numeric), ~ ifelse(is.nan(.), NA, .)))
 
+# subset to real years:
+cd_assigned_clean <- filter(cd_assigned_clean, (year >= 2015) & (year <= 2025))
 
+# ensures the data frame is a balanced panel
+# i.e., that every subblock has a row for every year from 2015 to 2025, with no gaps.
 cd_assigned_clean <- cd_assigned_clean |>
   complete(
     SUBBLOCKKEY,
-    year = 2014:2025,
+    year = 2015:2025,
     fill = list(
       n_crashes            = 0,
       TOTALTRAVELLANES     = NA_real_,
@@ -417,10 +328,14 @@ cd_assigned_clean <- cd_assigned_clean |>
       MAJORINJURIES_PEDESTRIAN  = 0,
       MINORINJURIES_PEDESTRIAN  = 0,
       UNKNOWNINJURIES_PEDESTRIAN= 0,
-      FATAL_PEDESTRIAN          = 0
+      FATAL_PEDESTRIAN          = 0,
+      TOTAL_VEHICLES            = 0,
+      TOTAL_BICYCLES            = 0,
+      TOTAL_PEDESTRIANS         = 0
     )
   )
 
+# fill the time invariant data into the gaps:
 cd_assigned_clean <- cd_assigned_clean |>
   arrange(SUBBLOCKKEY, year) |>
   group_by(SUBBLOCKKEY) |>
@@ -428,25 +343,31 @@ cd_assigned_clean <- cd_assigned_clean |>
        WARD_ID, area_m, .direction = "downup") |>
   ungroup()
 
+# (finally!) join on the protected and buffered bike lane info:
 cd_pbl_clean <- 
   dplyr::left_join(cd_assigned_clean,
                    pbl %>% 
                      st_drop_geometry() %>%
-                     select(SUBBLOCKKE, build_year) %>%
-                     group_by(SUBBLOCKKE) %>%
-                     summarise(
-                       min_build_year = min(build_year, na.rm=T),
-                       max_build_year = max(build_year, na.rm=T)
-                               ) %>%
-                     ungroup() %>%
-                     rename(SUBBLOCKKEY = SUBBLOCKKE),
+                     select(SUBBLOCKKEY, build_year),
                    by="SUBBLOCKKEY"
                    )
 
+# clean up our data, remove COVID years. 
+# Our last 2 years (2024 and 2025) will serve as our post-treatment years for most subblocks.
 cd_pbl_clean <- cd_pbl_clean %>%
-  filter(year %in% c(2014, 2015, 2016, 2017, 2018, 2024, 2025)) %>%
-  filter((max_build_year <= 2023) | is.na(max_build_year)) %>%
-  mutate(post_install = if_else(year > 2023, 1, 0)) %>%
+  mutate(build_year = if_else(build_year == 99, NA, build_year)) %>%
+  filter(year %in% c(2015, 2016, 2017, 2018, 2019, 2024, 2025)) %>%
+  mutate(post_install = if_else((year > 2023) | (year >= build_year), 1, 0)) 
+
+cd_pbl_clean$post_install[(cd_pbl_clean$year >= 2024) & is.na(cd_pbl_clean$build_year)] <- 1
+cd_pbl_clean$post_install[(cd_pbl_clean$year  < 2024) & is.na(cd_pbl_clean$build_year)] <- 0
+
+# filter out crash counts that are probably data errors.
+# it seems unlikely that this one stretch of road in ward 7 had over 250 crashes in a year
+cd_pbl_clean <- filter(cd_pbl_clean, n_crashes < 250)
+
+cd_pbl_clean <-
+  cd_pbl_clean %>%
   group_by(SUBBLOCKKEY) %>%
   mutate(
     min_post_val = min(post_install, na.rm=T),
@@ -480,9 +401,13 @@ cd_pbl_clean <- cd_pbl_clean %>%
     ped_injury_crashes_per_acre            = n_ped_injury_crashes / area_m  * 4046.86,
     serious_ped_injury_crashes_per_acre    = n_serious_ped_injury_crashes / area_m  * 4046.86,
     
-    treatment = if_else(is.na(max_build_year), 0, 1)
+    total_vehicles_per_acre                = TOTAL_VEHICLES / area_m  * 4046.86,
+    total_bikes_per_acre                   = TOTAL_BICYCLES / area_m  * 4046.86,
+    total_peds_per_acre                    = TOTAL_PEDESTRIANS / area_m  * 4046.86,
+    
+    treatment = if_else(is.na(build_year), 0, 1)
            ) %>%
-  group_by(SUBBLOCKKEY, post_install) %>%
+  group_by(SUBBLOCKKEY) %>%
   mutate(
     mean_crashes_pre2019 = mean(crashes_per_acre[year < 2019], na.rm = TRUE)
   ) %>%
@@ -496,19 +421,19 @@ cd_pbl_clean <- cd_pbl_clean %>%
 
 cd_pbl_clean <- dplyr::left_join(cd_pbl_clean, rs_cabi_change, by="SUBBLOCKKEY")
 
-# run_regs <- function(df, outcome, include_year=T) {
-#   root_reg <- paste0(outcome, " ~ treatment + post_install + treatment*post_install")
-#   print(summary(lm(formula = as.formula(root_reg), data = df)))
-#   cat("\n****************************************************")
-#   print(summary(lm(formula = as.formula(paste0(root_reg, " + mean_crashes_pre2019")), data = df)))
-#   cat("\n****************************************************")
-#   print(summary(lm(formula = as.formula(paste0(root_reg, " + mean_crashes_pre2019", ifelse(include_year, " + as.factor(year)", ""))), data = df)))
-#   cat("\n****************************************************")
-#   print(summary(lm(formula = as.formula(
-#     paste0(root_reg, " + mean_crashes_pre2019 + TOTALTRAVELLANEWIDTH + TOTALPARKINGLANES + as.factor(WARD_ID) + as.factor(DCFUNCTIONALCLASS) + total_change_trips",
-#            ifelse(include_year, " + as.factor(year)", ""))), 
-#     data = df)))
-# }
+run_regs <- function(df, outcome, include_year=T) {
+  root_reg <- paste0(outcome, " ~ treatment + post_install + treatment*post_install")
+  print(summary(lm(formula = as.formula(root_reg), data = df)))
+  cat("\n****************************************************")
+  print(summary(lm(formula = as.formula(paste0(root_reg, " + mean_crashes_pre2019")), data = df)))
+  cat("\n****************************************************")
+  print(summary(lm(formula = as.formula(paste0(root_reg, " + mean_crashes_pre2019", ifelse(include_year, " + as.factor(year)", ""))), data = df)))
+  cat("\n****************************************************")
+  print(summary(lm(formula = as.formula(
+    paste0(root_reg, " + mean_crashes_pre2019 + TOTALTRAVELLANEWIDTH + TOTALPARKINGLANES + as.factor(WARD_ID) + as.factor(DCFUNCTIONALCLASS) + total_change_trips",
+           ifelse(include_year, " + as.factor(year)", ""))),
+    data = df)))
+}
 
 # run_regs(df = cd_pbl_clean, outcome = "crashes_per_acre")
 # run_regs(df = cd_pbl_clean, outcome = "injury_crashes_per_acre")
@@ -518,7 +443,6 @@ cd_pbl_clean <- dplyr::left_join(cd_pbl_clean, rs_cabi_change, by="SUBBLOCKKEY")
 # run_regs(df = cd_pbl_clean, outcome = "serious_bike_injury_crashes_per_acre")
 # run_regs(df = cd_pbl_clean, outcome = "ped_injury_crashes_per_acre")
 # run_regs(df = cd_pbl_clean, outcome = "serious_ped_injury_crashes_per_acre")
-
 
 cd_pbl_clean_simplified <-
   cd_pbl_clean %>%
@@ -537,10 +461,6 @@ cd_pbl_clean_simplified <-
             ) %>%
   ungroup()
 
-
-
-
-
 # run_regs(df = cd_pbl_clean_simplified, outcome = "crashes_per_acre", F)
 # run_regs(df = cd_pbl_clean_simplified, outcome = "injury_crashes_per_acre", F)
 # run_regs(df = cd_pbl_clean_simplified, outcome = "driver_injury_crashes_per_acre", F)
@@ -552,7 +472,7 @@ cd_pbl_clean_simplified <-
 ```
 
 
-```{r}
+```{r, fig.width=12}
 run_regs <- function(df, outcome, include_year = TRUE) {
   root_reg <- paste0(outcome, " ~ treatment + post_install + treatment*post_install")
   year_term <- ifelse(include_year, " + as.factor(year)", "")
@@ -575,78 +495,110 @@ run_regs <- function(df, outcome, include_year = TRUE) {
 }
 
 
-outcomes <- c(
-  "crashes_per_acre",
-  "injury_crashes_per_acre",
-  "driver_injury_crashes_per_acre",
-  "serious_driver_injury_crashes_per_acre",
-  "bike_injury_crashes_per_acre",
-  "serious_bike_injury_crashes_per_acre",
-  "ped_injury_crashes_per_acre",
-  "serious_ped_injury_crashes_per_acre"
-)
+plot_effects <- function(outcomes) {
+  results <- map_dfr(outcomes, \(o) {
+    run_regs(df = cd_pbl_clean_simplified, outcome = o, include_year = FALSE)
+  })
+  
+  results <- results |>
+    mutate(
+      significance = case_when(
+        p.value < 0.001 ~ "p < 0.001",
+        p.value < 0.01  ~ "p < 0.01",
+        p.value < 0.05  ~ "p < 0.05",
+        TRUE            ~ "p ≥ 0.05"
+      ),
+      significance = factor(significance,
+                            levels = c("p < 0.001", "p < 0.01",
+                                       "p < 0.05",  "p ≥ 0.05")),
+      model  = factor(model, levels = c("simple", "full"),
+                      labels = c("Simple model", "Full model")),
+      outcome = factor(outcome, levels = outcomes) |> # preserve ordering
+        fct_relabel(\(x) str_replace_all(x, "_", " ") |>
+                                str_replace(" per acre", "") |>
+                                str_to_sentence())
+    )
+  
+  
+  sig_colors <- c(
+    "p < 0.001" = "#2166ac",
+    "p < 0.01"  = "#74add1",
+    "p < 0.05"  = "#fdae61",
+    "p ≥ 0.05"  = "#d9d9d9"
+  )
+  
+  ggplot(
+         filter(results, model=="Simple model"), 
+         aes(x = outcome, y = estimate, fill = significance)) +
+    geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+    geom_errorbar(
+      aes(ymin = estimate - 1.96 * std.error,
+          ymax = estimate + 1.96 * std.error),
+      position = position_dodge(width = 0.7),
+      width = 0.2, color = "grey30"
+    ) +
+    geom_hline(yintercept = 0, color = "black", linewidth = 0.5) +
+    scale_fill_manual(values = sig_colors, drop = FALSE) +
+    scale_x_discrete(labels = \(x) str_replace_all(x, "_", "\n")) +
+    # facet_wrap(~model) +
+    labs(
+      title = "Effect of protected bike lane installation on crash outcomes",
+      subtitle = "Coefficient on treatment × post-install interaction",
+      x     = NULL,
+      y     = "Estimated effect per acre",
+      fill  = "Significance"
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.x     = element_text(size = 8),
+      legend.position = "bottom",
+      panel.grid.major.x = element_blank()
+    )
+}
 
-results <- map_dfr(outcomes, \(o) {
-  run_regs(df = cd_pbl_clean_simplified, outcome = o, include_year = FALSE)
-})
 
-results <- results |>
-  mutate(
-    significance = case_when(
-     p.value < 0.05 ~ "p < 0.05",
-      p.value < 0.10 ~ "p < 0.10",
-      p.value < 0.15 ~ "p < 0.15",
-      TRUE           ~ "p ≥ 0.15"
-    ),
-    significance = factor(significance,
-                          levels = c("p < 0.05", "p < 0.10",
-                                     "p < 0.15", "p ≥ 0.15")),
-    model  = factor(model, levels = c("simple", "full"),
-                    labels = c("Simple model", "Kitchen sink model")),
-    outcome = factor(outcome, levels = outcomes)  # preserve ordering
+plot_effects(
+  outcomes = c(
+      "crashes_per_acre",
+      "injury_crashes_per_acre",
+      
+      "driver_injury_crashes_per_acre",
+      "serious_driver_injury_crashes_per_acre",
+  
+      "bike_injury_crashes_per_acre",
+      "serious_bike_injury_crashes_per_acre",
+      
+      "ped_injury_crashes_per_acre",
+      "serious_ped_injury_crashes_per_acre"
+      )
   )
 
-sig_colors <- c(
-  "p < 0.05" = "#2166ac",
-  "p < 0.10" = "#74add1",
-  "p < 0.15" = "#fdae61",
-  "p ≥ 0.15" = "#d9d9d9"
-)
-
-```
-
-```{r}
-ggplot(filter(results, model=="Simple model"), aes(x = outcome, y = estimate, fill = significance)) +
-  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
-  geom_errorbar(
-    aes(ymin = estimate - 1.96 * std.error,
-        ymax = estimate + 1.96 * std.error),
-    position = position_dodge(width = 0.7),
-    width = 0.2, color = "grey30"
-  ) +
-  geom_hline(yintercept = 0, color = "black", linewidth = 0.5) +
-  scale_fill_manual(values = sig_colors) +
-  scale_x_discrete(labels = \(x) str_replace_all(x, "_", "\n")) +
-  # facet_wrap(~model) +
-  labs(
-    title = "Effect of protected bike lane installation on crash outcomes",
-    subtitle = "Coefficient on treatment × post-install interaction",
-    x     = NULL,
-    y     = "Annual crashes / acre",
-    fill  = "Significance"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x     = element_text(size = 8),
-    legend.position = "bottom",
-    panel.grid.major.x = element_blank()
-  ) 
-
+plot_effects(
+  outcomes = c(
+      "total_vehicles_per_acre",
+      "total_bikes_per_acre",
+      "total_peds_per_acre"
+      )
+  )
 ```
 
 
 
 ```{r}
+  outcomes = c(
+      "crashes_per_acre",
+      "injury_crashes_per_acre",
+      
+      "driver_injury_crashes_per_acre",
+      "serious_driver_injury_crashes_per_acre",
+  
+      "bike_injury_crashes_per_acre",
+      "serious_bike_injury_crashes_per_acre",
+      
+      "ped_injury_crashes_per_acre",
+      "serious_ped_injury_crashes_per_acre"
+      )
+
 summary_df <-
   cd_pbl_clean_simplified |>
   select(SUBBLOCKKEY, post_install, treatment, ends_with("_per_acre")) |>
