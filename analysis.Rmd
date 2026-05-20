@@ -45,8 +45,10 @@ ggplot(to_plot) +
   geom_bar(aes(x=`Project name`, y=Change, fill=Outcome), stat="identity", position="dodge") +
   labs(y="% decrease in crashes", x="") +
   ggtitle("All projects saw decreases in crashes") +
-  geom_hline(aes(yintercept=mean(Change[Outcome == "All crashes"], na.rm=T)), color="#F8766D", linetype="dashed", linewidth=.8, alpha=.5) +
-  geom_hline(aes(yintercept=mean(Change[Outcome == "Injury crashes"], na.rm=T)), color="#00BFC4", linetype="dashed", linewidth=.8, alpha=.5) +
+  geom_hline(aes(yintercept=mean(Change[Outcome == "All crashes"], na.rm=T)), 
+             color="#F8766D", linetype="dashed", linewidth=.8, alpha=.5) +
+  geom_hline(aes(yintercept=mean(Change[Outcome == "Injury crashes"], na.rm=T)), 
+             color="#00BFC4", linetype="dashed", linewidth=.8, alpha=.5) +
   theme_minimal() +
   theme(legend.title = element_blank())
 ```
