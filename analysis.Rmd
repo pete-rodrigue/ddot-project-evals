@@ -2,7 +2,9 @@
 title: "DDOT project evaluations"
 author: "pete rodrigue"
 date: "`r Sys.Date()`"
-output: html_document
+output:
+  html_document:
+    code_folding: hide
 ---
 
 
@@ -100,11 +102,11 @@ rm(df); rm(to_plot); rm(url)
 
 DDOT looked at a few projects in depth. But we can also use DC's crash data to look at every protected and buffered bike lane in DDOT's "bike lane" shapefile.
 
-```{r}
+```{r load_clean_crash_data}
 # load crash data
 # data downloaded from here:
 # https://opendata.dc.gov/datasets/crashes-in-dc/about
-cd <- readr::read_csv("data/Crashes_in_DC.csv")
+cd <- readr::read_csv("data/Crashes_in_DC.csv", show_col_types = F)
 
 # create year and month of crash variables:
 cd$year  <- as.numeric(substr(x = cd$REPORTDATE, start = 1, stop = 4))
@@ -117,13 +119,12 @@ cd <- filter(cd, !is.na(year))
 # table(cd$year)
 # According to DDOT, the location information in the data set became much more accurate starting in 2016:
 # https://ddotwiki.atlassian.net/wiki/spaces/GIS0225/pages/2053603429/Crash+Data
-```
 
-```{r}
 # project crash data:
 cd <- cd |>
   st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = 4326)
 
+# injury variables we care about:
 injury_vars <- c(
   "MAJORINJURIES_BICYCLIST",   "MINORINJURIES_BICYCLIST",
   "UNKNOWNINJURIES_BICYCLIST", "FATAL_BICYCLIST",
@@ -134,11 +135,16 @@ injury_vars <- c(
   "TOTAL_VEHICLES", "TOTAL_BICYCLES", "TOTAL_PEDESTRIANS"
 )
 
+# subset to just variables we care about:
 cd <- select(cd, CRIMEID, year, month, injury_vars)
+
+coords <- st_coordinates(cd)
+cd$crash_lon <- coords[, "X"]
+cd$crash_lat <- coords[, "Y"]
 ```
 
 
-```{r}
+```{r load_clean_bl_data}
 # load labeled PBL data that has the road subblock IDs and the year in which 
 # PBLs were installed on those subblocks (we hand labeled them)
 pbl <- 
@@ -152,12 +158,12 @@ pbl <-
 
 
 
-```{r}
+```{r load_clean_cabi_data}
 # go to this other file to download and clean the Cabi data if you need to:
 # source("clean_cabi_data.R")
 
 # otherwise just load the cleaned data:
-cabi <- readr::read_csv("data/cabi_both_years_clean.csv")
+cabi <- readr::read_csv("data/cabi_both_years_clean.csv", show_col_types = F)
 
 cabi <-
   cabi |>
@@ -209,6 +215,12 @@ cabi_sf <- cabi |>
   st_transform(st_crs(4326))
 
 
+# add rough CaBi ride totals by year:
+annual_cabi_rides <-
+  data.frame(
+    "year"       = c(2017, 2024, 2025),
+    "cabi_rides" = c(3.8 , 6.1 , 6.6)
+    )
 ```
 
 what we'll do:
@@ -222,24 +234,26 @@ what we'll do:
 * compare simple before and after means on PBL/BBL & non-PBL/BBL segments
 
 
-```{r}
+```{r load_clean_subblock_data}
 
 # load all roadway sub-block data, from here:
 # https://opendata.dc.gov/datasets/df571ab7fea446e396bf2862d0ab6833_162/explore?location=38.927746%2C-77.024575%2C18
 # This will be our main data set we merge other data onto.
 rs <- 
   st_read("data/Roadway_SubBlock.geojson", quiet=T) %>%
-  st_zm(drop = TRUE, what = "ZM") %>%  # drops Z (and M if present) → pure XY
-  # Leaflet requires WGS84 (EPSG:4326) — reproject if needed
-  st_transform(4326) %>%
-  st_cast("MULTILINESTRING") 
+  filter(ROADTYPE == 1) %>%             # keep just streets, remove service roads, ramps, alleys, driveways, trails, and walkways
+  st_zm(drop = TRUE, what = "ZM") %>%   # drops Z (and M if present) → pure XY
+  st_transform(4326) %>%                # Leaflet requires WGS84 (EPSG:4326) — reproject if needed
+  st_cast("MULTILINESTRING")
+```
 
+```{r merge_subblock_cabi_data}
 # create an X meter buffer around each subblock to count the number of nearby 
 # cabi trips
 rs_cabi_buf <-
   rs |>
   st_transform(6487) |>          # EPSG:6487 — NAD83 / Maryland (metres)
-  st_buffer(500) |>              # X m buffer
+  st_buffer(dist = 500) |>              # X m buffer
   st_transform(st_crs(cd))       # reproject back to match cd's CRS
 
 # Spatial join stations to buffers, then summarise by subblock
@@ -252,24 +266,44 @@ rs_cabi_change <- rs_cabi_buf |>
     n_stations         = sum(!is.na(change_n_trips)),
     .groups = "drop"
   )
+```
 
 
+```{r merge_subblock_crash_data}
 # OK now let's join the crashes to the subblocks, which we'll do with anther,
 # smaller, X meter buffer:
-rs_radius <- (rs$TOTALPARKINGLANES + rs$TOTALTRAVELLANES)*10 / 2 + 10
+rs_radius <- (rs$TOTALPARKINGLANES + rs$TOTALTRAVELLANES)*4 / 2 + 4
 rs_crash_buf <-
   rs |>
-  st_transform(6487) |>          # EPSG:6487 — NAD83 / Maryland (metres)
-  st_buffer(rs_radius) |>        # X m buffer
-  st_transform(st_crs(cd)) |>    # reproject back to match cd's CRS
+  st_transform(6487) |>                                       # EPSG:6487 — NAD83 / Maryland (meters)
+  st_buffer(dist = rs_radius, endCapStyle = "FLAT") |>        # X m buffer
+  st_transform(st_crs(cd)) |>                                 # reproject back to match cd's CRS
   select(ROUTEID, ROUTENAME, BLOCKKEY, SUBBLOCKKEY, 
          TOTALTRAVELLANES, TOTALPARKINGLANES, TOTALTRAVELLANEWIDTH,
          WARD_ID, DCFUNCTIONALCLASS
          ) %>%
   mutate(area_m = st_area(.))
 
-
 units(rs_crash_buf$area_m) <- NULL
+
+leaflet() |>
+  addProviderTiles(providers$CartoDB.Positron) |>
+  addPolygons(
+    data = rs_crash_buf %>% 
+            st_crop(xmin = -77.03, ymin = 38.94, xmax = -77.01, ymax = 38.944), 
+    fillColor = "blue", 
+    stroke=F) |>
+  addCircleMarkers(
+    data = cd %>% 
+      st_crop(xmin = -77.03, ymin = 38.94, xmax = -77.010, ymax = 38.944) %>%
+      filter(year==2025),
+    lat=~crash_lat, 
+    lng=~crash_lon, 
+    stroke=F, color="red", radius = 4, label=)
+```
+
+
+```{r}
 # Join crashes to buffers — one crash can match multiple buffers, since the buffers can overlap
 cd_joined <- cd |> st_join(rs_crash_buf, join = st_within, left = FALSE)
 
@@ -426,12 +460,6 @@ cd_pbl_clean <-
 
 cd_pbl_clean <- dplyr::left_join(cd_pbl_clean, rs_cabi_change, by="SUBBLOCKKEY")
 
-# add very rough CaBi numbers by year:
-annual_cabi_rides <-
-  data.frame(
-    "year"       = c(2016, 2017, 2018, 2019, 2024, 2025),
-    "cabi_rides" = c(3.5 , 3.8 , 3.4 , 3.4 , 6.1 , 6.6)
-    )
 
 cd_pbl_clean <- dplyr::left_join(cd_pbl_clean, annual_cabi_rides, by="year")
 
@@ -458,17 +486,17 @@ run_regs <- function(df, outcome, include_year=T, return_mod=F) {
   }
 }
 
-run_regs(df = cd_pbl_clean, outcome = "crashes_per_acre")
-run_regs(df = cd_pbl_clean, outcome = "injury_crashes_per_acre")
-run_regs(df = cd_pbl_clean, outcome = "driver_injury_crashes_per_acre")
-run_regs(df = cd_pbl_clean, outcome = "serious_driver_injury_crashes_per_acre")
-run_regs(df = cd_pbl_clean, outcome = "bike_injury_crashes_per_acre")
-run_regs(df = cd_pbl_clean, outcome = "serious_bike_injury_crashes_per_acre")
-run_regs(df = cd_pbl_clean, outcome = "ped_injury_crashes_per_acre")
-run_regs(df = cd_pbl_clean, outcome = "serious_ped_injury_crashes_per_acre")
-
-to_plot <- run_regs(df = cd_pbl_clean, outcome = "injury_crashes_per_acre", return_mod=T)
-plot(to_plot)
+# run_regs(df = cd_pbl_clean, outcome = "crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "injury_crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "driver_injury_crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "serious_driver_injury_crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "bike_injury_crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "serious_bike_injury_crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "ped_injury_crashes_per_acre")
+# run_regs(df = cd_pbl_clean, outcome = "serious_ped_injury_crashes_per_acre")
+# 
+# to_plot <- run_regs(df = cd_pbl_clean, outcome = "injury_crashes_per_acre", return_mod=T)
+# plot(to_plot)
 
 cd_pbl_clean_simplified <-
   cd_pbl_clean %>%
