@@ -100,130 +100,47 @@ ggplot(to_plot) +
 rm(df); rm(to_plot); rm(url)
 ```
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 <br><br>
 
 DDOT looked at a few projects in depth. But we can also use DC's crash data to look at every protected and buffered bike lane in DDOT's "bike lane" shapefile.
-
-```{r load_clean_crash_data}
-# load crash data
-# data downloaded from here:
-# https://opendata.dc.gov/datasets/crashes-in-dc/about
-cd <- readr::read_csv("data/Crashes_in_DC.csv", show_col_types = F)
-
-# create year and month of crash variables:
-cd$year  <- as.numeric(substr(x = cd$REPORTDATE, start = 1, stop = 4))
-cd$month <- as.numeric(substr(x = cd$REPORTDATE, start = 6, stop = 7))
-
-# remove rows with no date information:
-cd <- filter(cd, !is.na(year))
-
-# this data has crashes going back to the 2000s, but the data doesn't look super complete until 2014 or so:
-# table(cd$year)
-# According to DDOT, the location information in the data set became much more accurate starting in 2016:
-# https://ddotwiki.atlassian.net/wiki/spaces/GIS0225/pages/2053603429/Crash+Data
-
-# project crash data:
-cd <- cd |>
-  st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = 4326)
-
-# injury variables we care about:
-injury_vars <- c(
-  "MAJORINJURIES_BICYCLIST",   "MINORINJURIES_BICYCLIST",
-  "UNKNOWNINJURIES_BICYCLIST", "FATAL_BICYCLIST",
-  "MAJORINJURIES_DRIVER",      "MINORINJURIES_DRIVER",
-  "UNKNOWNINJURIES_DRIVER",    "FATAL_DRIVER",
-  "MAJORINJURIES_PEDESTRIAN",  "MINORINJURIES_PEDESTRIAN",
-  "UNKNOWNINJURIES_PEDESTRIAN","FATAL_PEDESTRIAN",
-  "TOTAL_VEHICLES", "TOTAL_BICYCLES", "TOTAL_PEDESTRIANS"
-)
-
-# subset to just variables we care about:
-cd <- select(cd, CRIMEID, year, month, injury_vars)
-
-coords <- st_coordinates(cd)
-cd$crash_lon <- coords[, "X"]
-cd$crash_lat <- coords[, "Y"]
-```
-
-
-```{r load_clean_bl_data}
-# load labeled PBL data that has the road subblock IDs and the year in which 
-# PBLs were installed on those subblocks (we hand labeled them)
-pbl <- 
-  st_read("data/Protected-Buffered-Bike-Lanes.geojson", quiet=T) %>%
-  filter(!is.na(install_year)) %>% 
-  filter(install_year != 99) %>%
-  rename(build_year = install_year) #%>%
-  # filter((!is.na(BIKELANE_PROTECTED)) | (!is.na(BIKELANE_DUAL_PROTECTED)))
-```
-
-
-
-
-```{r load_clean_cabi_data}
-# go to this other file to download and clean the Cabi data if you need to:
-# source("clean_cabi_data.R")
-
-# otherwise just load the cleaned data:
-cabi <- readr::read_csv("data/cabi_both_years_clean.csv", show_col_types = F)
-
-cabi <-
-  cabi |>
-  mutate(
-    n_trips_ended_2018 = if_else(is.na(n_trips_ended_2018), 0, n_trips_ended_2018),
-    n_trips_ended_2025 = if_else(is.na(n_trips_ended_2025), 0, n_trips_ended_2025),
-    change_n_trips     = n_trips_ended_2025 - n_trips_ended_2018
-  ) %>%
-  filter(!is.na(end_lat))
-
-# # Diverging palette centered at 0 — red = fewer trips, blue = more trips
-# pal <- colorNumeric(
-#   palette = "RdBu",
-#   domain  = cabi$change_n_trips,
-#   reverse = FALSE
-# )
-# leaflet(cabi) |>
-#   addProviderTiles(providers$CartoDB.Positron) |>
-#   addCircleMarkers(
-#     lng          = ~end_lng,
-#     lat          = ~end_lat,
-#     radius       = 6,
-#     color        = "white",
-#     weight       = 0.5,
-#     fillColor    = ~pal(change_n_trips),
-#     fillOpacity  = 0.85,
-#     label = ~paste0(
-#       "<b>", `End station number`, "</b><br>",
-#       "2018 trips: ", scales::comma(n_trips_ended_2018), "<br>",
-#       "2025 trips: ", scales::comma(n_trips_ended_2025), "<br>",
-#       "Change: ", scales::comma(change_n_trips)
-#     ) |> lapply(htmltools::HTML),
-#     labelOptions = labelOptions(textsize = "12px", direction = "auto")
-#   ) |>
-#   addLegend(
-#     position = "bottomright",
-#     pal      = pal,
-#     values   = ~change_n_trips,
-#     title    = "Change in<br>annual trips",
-#     labFormat = labelFormat(big.mark = ","),
-#     opacity  = 0.9
-#   ) |>
-#   addScaleBar(position = "bottomleft")
-
-# Convert cabi to sf object
-cabi_sf <- cabi |>
-  filter(!is.na(end_lat), !is.na(end_lng)) |>
-  st_as_sf(coords = c("end_lng", "end_lat"), crs = 4326) |>
-  st_transform(st_crs(4326))
-
-
-# add rough CaBi ride totals by year:
-annual_cabi_rides <-
-  data.frame(
-    "year"       = c(2017, 2024, 2025),
-    "cabi_rides" = c(3.8 , 6.1 , 6.6)
-    )
-```
 
 what we'll do:
 
@@ -236,234 +153,152 @@ what we'll do:
 * compare simple before and after means on PBL/BBL & non-PBL/BBL segments
 
 
-```{r load_clean_subblock_data}
+```{r analysis_globals, fig.width=12}
+# which years to include in the analysis
+ANALYSIS_YEARS = c(2016, 2017, 2018, 2019, 2024, 2025)
+POST_YEARS     = c(2024, 2025)
+# whether to analyze the data at the subblock level (SUBBLOCKKEY) or 
+# block level (BLOCKKEY):
+ANALYSIS_LEVEL = "SUBBLOCKKEY"
+# which treatment groups to include, options include
+# switcher     : units that got PBLs between 2020 and 2023 inclusive 
+# never_taker  : units that never got PBLs
+# late_taker   : units that got PBLs in 2024 or 2025
+# always_taker : units that got PBLs before 2019
+TREATMENT_GROUPS_TO_INCLUDE = c("switcher", "never_taker")
+# whether to include buffered bike lanes as well or just fully protected bike lanes
+PBLS_ONLY = TRUE
+# a bbox for map plotting so we don't plot tons of data at once:
+PLOT_BBOX = c(xmin = -77.015, ymin = 38.94, xmax = -77.010, ymax = 38.944)
 
-# load all roadway sub-block data, from here:
-# https://opendata.dc.gov/datasets/df571ab7fea446e396bf2862d0ab6833_162/explore?location=38.927746%2C-77.024575%2C18
-# This will be our main data set we merge other data onto.
-rs <- 
-  st_read("data/Roadway_SubBlock.geojson", quiet=T) %>%
-  filter(ROADTYPE == 1) %>%             # keep just streets, remove service roads, ramps, alleys, driveways, trails, and walkways
-  st_zm(drop = TRUE, what = "ZM") %>%   # drops Z (and M if present) → pure XY
-  st_transform(4326) %>%                # Leaflet requires WGS84 (EPSG:4326) — reproject if needed
-  st_cast("MULTILINESTRING")
-```
+# source the R script in which we load all of the data:
+source("load_data.R")
+source("prepare_timeseries.R")
+source("make_plots.R")
 
-```{r merge_subblock_cabi_data}
-# create an X meter buffer around each subblock to count the number of nearby 
-# cabi trips
-rs_cabi_buf <-
-  rs |>
-  st_transform(6487) |>          # EPSG:6487 — NAD83 / Maryland (metres)
-  st_buffer(dist = 500) |>              # X m buffer
-  st_transform(st_crs(cd))       # reproject back to match cd's CRS
+plot_vars <- c(
+  "crashes_per_acre",
+  
+  "injury_crashes_per_acre",
+  "driver_injury_crashes_per_acre",
+  # "serious_driver_injury_crashes_per_acre",
+  
+  "bike_injury_crashes_per_acre",
+  # "serious_bike_injury_crashes_per_acre",
+  
+  "ped_injury_crashes_per_acre"
+  # "serious_ped_injury_crashes_per_acre"
+)
 
-# Spatial join stations to buffers, then summarise by subblock
-rs_cabi_change <- rs_cabi_buf |>
-  st_join(cabi_sf, join = st_contains) |>
-  st_drop_geometry() |>
-  group_by(SUBBLOCKKEY) |>
-  summarise(
-    total_change_trips = sum(change_n_trips, na.rm = TRUE),
-    n_stations         = sum(!is.na(change_n_trips)),
-    .groups = "drop"
-  )
-```
+group_types <- c("switcher", "never_taker", "late_taker", "always_taker")
+
+# Nicer labels for facet strip text
+var_labels <- c(
+  "crashes_per_acre"                      = "All Crashes",
+  "injury_crashes_per_acre"               = "Injury Crashes",
+  "driver_injury_crashes_per_acre"        = "Driver Injury Crashes",
+  # "serious_driver_injury_crashes_per_acre"= "Serious Driver Injury Crashes",
+  "bike_injury_crashes_per_acre"          = "Bike Injury Crashes",
+  # "serious_bike_injury_crashes_per_acre"  = "Serious Bike Injury Crashes",
+  "ped_injury_crashes_per_acre"           = "Ped Injury Crashes"
+  # "serious_ped_injury_crashes_per_acre"   = "Serious Ped Injury Crashes"
+)
+
+group_labels <- c(
+  "switcher"     = "Switchers (PBL installed 2020–2023)",
+  "never_taker"  = "Never Takers (no PBL)",
+  "late_taker"   = "Late Takers (PBL installed 2024–2025)",
+  "always_taker" = "Always Takers (PBL installed before 2019)"
+)
 
 
-```{r merge_subblock_crash_data}
-# OK now let's join the crashes to the subblocks, which we'll do with anther,
-# smaller, X meter buffer:
-rs_radius <- (rs$TOTALPARKINGLANES + rs$TOTALTRAVELLANES)*4 / 2 + 4
-rs_crash_buf <-
-  rs |>
-  st_transform(6487) |>                                       # EPSG:6487 — NAD83 / Maryland (meters)
-  st_buffer(dist = rs_radius, endCapStyle = "FLAT") |>        # X m buffer
-  st_transform(st_crs(cd)) |>                                 # reproject back to match cd's CRS
-  select(ROUTEID, ROUTENAME, BLOCKKEY, SUBBLOCKKEY, 
-         TOTALTRAVELLANES, TOTALPARKINGLANES, TOTALTRAVELLANEWIDTH,
-         WARD_ID, DCFUNCTIONALCLASS
-         ) %>%
-  mutate(area_m = st_area(.))
 
-units(rs_crash_buf$area_m) <- NULL
+# clean the data:
+res <- prepare_timeseries()
+cd_pbl_clean_simplified <- res[[1]]
 
-leaflet() |>
-  addProviderTiles(providers$CartoDB.Positron) |>
-  addPolygons(
-    data = rs_crash_buf %>% 
-            st_crop(xmin = -77.03, ymin = 38.94, xmax = -77.01, ymax = 38.944), 
-    fillColor = "blue", 
-    stroke=F) |>
-  addCircleMarkers(
-    data = cd %>% 
-      st_crop(xmin = -77.03, ymin = 38.94, xmax = -77.010, ymax = 38.944) %>%
-      filter(year==2025),
-    lat=~crash_lat, 
-    lng=~crash_lon, 
-    stroke=F, color="red", radius = 4, label=)
+# descriptive histograms
+
+# density_plots        <- map(set_names(group_types), \(g) make_density_plots(cd_pbl_clean_simplified, g))
+# density_plots_log    <- map(set_names(group_types), \(g) make_density_plots(cd_pbl_clean_simplified, g, log_transform = TRUE))
+# 
+# walk(density_plots_log, print)
 ```
 
 
 ```{r}
-# Join crashes to buffers — one crash can match multiple buffers, since the buffers can overlap
-cd_joined <- cd |> st_join(rs_crash_buf, join = st_within, left = FALSE)
+# TODO: replicate DDOT results
+```
 
-# For crashes in multiple buffers, randomly keep one. this will add noise but that's probably OK.
-cd_assigned <- cd_joined |>
-  st_drop_geometry() #|>
-  # group_by(CRIMEID) |>           
-  # slice_sample(n = 1) |>         # randomly pick one buffer per crash
-  # ungroup()
+```{r, fig.width=12}
+ecdf_plots <- map(set_names(group_types), \(g) make_ecdf_plots(cd_pbl_clean_simplified, g))
+walk(ecdf_plots, print)
+```
 
+```{r}
+# Usage:
+summarise_outcomes_by_period(cd_pbl_clean_simplified)
 
-# count up the number of crashes in each subblock
-cd_assigned_clean <-
-  cd_assigned %>%
-  mutate(WARD_ID = as.numeric(WARD_ID)) %>%
-  group_by(SUBBLOCKKEY, year) %>%
-  summarise(
-    across(all_of(injury_vars), \(x) sum(x, na.rm = TRUE)),
-    n_crashes            = n(),
-    TOTALTRAVELLANES     = first(TOTALTRAVELLANES),
-    TOTALPARKINGLANES    = first(TOTALPARKINGLANES),
-    TOTALTRAVELLANEWIDTH = first(TOTALTRAVELLANEWIDTH),
-    WARD_ID              = first(WARD_ID),
-    DCFUNCTIONALCLASS    = first(DCFUNCTIONALCLASS),
-    area_m               = first(area_m),
-    .groups   = "drop"
-  ) %>%
-  ungroup() %>%
-  mutate(
-    crashes_per_acre     = n_crashes / area_m * 4046.86
-  ) %>%
-  mutate(across(where(is.numeric), ~ ifelse(is.nan(.), NA, .)))
+# Filtered to switchers only, for example:
+cd_pbl_clean_simplified |>
+  filter(switcher == 1) |>
+  summarise_outcomes_by_period()
+```
 
-# subset to real years:
-cd_assigned_clean <- filter(cd_assigned_clean, (year > 2015) & (year <= 2025))
+```{r}
+cd_pbl_clean_simplified |>
+  filter(never_taker == 1) |>
+  summarise_outcomes_by_period()
+```
 
-# ensures the data frame is a balanced panel
-# i.e., that every subblock has a row for every year from 2015 to 2025, with no gaps.
-cd_assigned_clean <- cd_assigned_clean |>
-  complete(
-    SUBBLOCKKEY,
-    year = 2015:2025,
-    fill = list(
-      n_crashes            = 0,
-      TOTALTRAVELLANES     = NA_real_,
-      TOTALPARKINGLANES    = NA_real_,
-      TOTALTRAVELLANEWIDTH = NA_real_,
-      WARD_ID              = NA_real_,
-      area_m               = NA_real_,
-      DCFUNCTIONALCLASS    = NA_real_,
-      crashes_per_acre     = 0,
-      # injury vars
-      MAJORINJURIES_BICYCLIST   = 0,
-      MINORINJURIES_BICYCLIST   = 0,
-      UNKNOWNINJURIES_BICYCLIST = 0,
-      FATAL_BICYCLIST           = 0,
-      MAJORINJURIES_DRIVER      = 0,
-      MINORINJURIES_DRIVER      = 0,
-      UNKNOWNINJURIES_DRIVER    = 0,
-      FATAL_DRIVER              = 0,
-      MAJORINJURIES_PEDESTRIAN  = 0,
-      MINORINJURIES_PEDESTRIAN  = 0,
-      UNKNOWNINJURIES_PEDESTRIAN= 0,
-      FATAL_PEDESTRIAN          = 0,
-      TOTAL_VEHICLES            = 0,
-      TOTAL_BICYCLES            = 0,
-      TOTAL_PEDESTRIANS         = 0
-    )
-  )
-
-# fill the time invariant data into the gaps:
-cd_assigned_clean <- cd_assigned_clean |>
-  arrange(SUBBLOCKKEY, year) |>
-  group_by(SUBBLOCKKEY) |>
-  fill(TOTALTRAVELLANES, TOTALPARKINGLANES, TOTALTRAVELLANEWIDTH, DCFUNCTIONALCLASS,
-       WARD_ID, area_m, .direction = "downup") |>
-  ungroup()
-
-# (finally!) join on the protected and buffered bike lane info:
-cd_pbl_clean <- 
-  dplyr::left_join(cd_assigned_clean,
-                   pbl %>% 
-                     st_drop_geometry() %>%
-                     select(SUBBLOCKKEY, build_year),
-                   by="SUBBLOCKKEY"
-                   )
-
-# clean up our data, remove COVID years. 
-# Our last 2 years (2024 and 2025) will serve as our post-treatment years for most subblocks.
-cd_pbl_clean <- cd_pbl_clean %>%
-  mutate(build_year = if_else(build_year == 99, NA, build_year)) %>%
-  filter(year %in% c(2016, 2017, 2018, 2019, 2024, 2025)) %>%
-  mutate(post_install = if_else((year > 2023) | (year >= build_year), 1, 0)) 
-
-cd_pbl_clean$post_install[(cd_pbl_clean$year >= 2024) & is.na(cd_pbl_clean$build_year)] <- 1
-cd_pbl_clean$post_install[(cd_pbl_clean$year  < 2024) & is.na(cd_pbl_clean$build_year)] <- 0
-
-# filter out crash counts that are probably data errors.
-# it seems unlikely that this one stretch of road in ward 7 had over 250 crashes in a year
-cd_pbl_clean <- filter(cd_pbl_clean, n_crashes < 250)
-
-cd_pbl_clean <-
-  cd_pbl_clean %>%
-  group_by(SUBBLOCKKEY) %>%
-  mutate(
-    min_post_val = min(post_install, na.rm=T),
-    max_post_val = max(post_install, na.rm=T)
-         ) %>%
-  ungroup() %>%
-    filter((min_post_val==0) & (max_post_val==1)) %>%
-  mutate(
-    n_injury_crashes = 
-           MAJORINJURIES_BICYCLIST + MINORINJURIES_BICYCLIST + UNKNOWNINJURIES_BICYCLIST + FATAL_BICYCLIST +
-           MAJORINJURIES_DRIVER + MINORINJURIES_DRIVER + UNKNOWNINJURIES_DRIVER + FATAL_DRIVER +
-           MAJORINJURIES_PEDESTRIAN + MINORINJURIES_PEDESTRIAN + UNKNOWNINJURIES_PEDESTRIAN + FATAL_PEDESTRIAN,
-    n_driver_injury_crashes = 
-           MAJORINJURIES_DRIVER + MINORINJURIES_DRIVER + UNKNOWNINJURIES_DRIVER + FATAL_DRIVER,
-    n_serious_driver_injury_crashes = 
-           MAJORINJURIES_DRIVER + FATAL_DRIVER,
-    n_bike_injury_crashes = 
-           MAJORINJURIES_BICYCLIST + MINORINJURIES_BICYCLIST + UNKNOWNINJURIES_BICYCLIST + FATAL_BICYCLIST,
-    n_serious_bike_injury_crashes = 
-           MAJORINJURIES_BICYCLIST + FATAL_BICYCLIST,
-    n_ped_injury_crashes = 
-           MAJORINJURIES_PEDESTRIAN + MINORINJURIES_PEDESTRIAN + UNKNOWNINJURIES_PEDESTRIAN + FATAL_PEDESTRIAN,
-    n_serious_ped_injury_crashes = 
-           MAJORINJURIES_PEDESTRIAN + FATAL_PEDESTRIAN,
-    
-    injury_crashes_per_acre                = n_injury_crashes / area_m * 4046.86,
-    driver_injury_crashes_per_acre         = n_driver_injury_crashes / area_m * 4046.86,
-    serious_driver_injury_crashes_per_acre = n_serious_driver_injury_crashes / area_m * 4046.86,
-    bike_injury_crashes_per_acre           = n_bike_injury_crashes / area_m * 4046.86,
-    serious_bike_injury_crashes_per_acre   = n_serious_bike_injury_crashes / area_m * 4046.86,
-    ped_injury_crashes_per_acre            = n_ped_injury_crashes / area_m  * 4046.86,
-    serious_ped_injury_crashes_per_acre    = n_serious_ped_injury_crashes / area_m  * 4046.86,
-    
-    total_vehicles_per_acre                = TOTAL_VEHICLES / area_m  * 4046.86,
-    total_bikes_per_acre                   = TOTAL_BICYCLES / area_m  * 4046.86,
-    total_peds_per_acre                    = TOTAL_PEDESTRIANS / area_m  * 4046.86,
-    
-    treatment = if_else(is.na(build_year), 0, 1)
-           ) %>%
-  group_by(SUBBLOCKKEY) %>%
-  mutate(
-    mean_crashes_pre2019 = mean(crashes_per_acre[year < 2019], na.rm = TRUE)
-  ) %>%
-  ungroup() %>%
-  mutate(mean_crashes_pre2019 = na_if(mean_crashes_pre2019, NaN)) %>%
-  group_by(SUBBLOCKKEY) %>%
-  mutate(mean_crashes_pre2019 = mean(mean_crashes_pre2019, na.rm=T)) %>%
-  ungroup()
+```{r}
+cd_pbl_clean_simplified |>
+  filter(always_taker == 1 | switcher == 1) |>
+  summarise_outcomes_by_period()
+```
 
 
 
-cd_pbl_clean <- dplyr::left_join(cd_pbl_clean, rs_cabi_change, by="SUBBLOCKKEY")
 
 
-cd_pbl_clean <- dplyr::left_join(cd_pbl_clean, annual_cabi_rides, by="year")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r, fig.width=12}
+
 
 run_regs <- function(df, outcome, include_year=T, return_mod=F) {
   print(paste("############### ", outcome))
@@ -499,36 +334,10 @@ run_regs <- function(df, outcome, include_year=T, return_mod=F) {
 # 
 # to_plot <- run_regs(df = cd_pbl_clean, outcome = "injury_crashes_per_acre", return_mod=T)
 # plot(to_plot)
-
-cd_pbl_clean_simplified <-
-  cd_pbl_clean %>%
-  group_by(SUBBLOCKKEY, post_install) %>%
-  summarize(
-    TOTALTRAVELLANEWIDTH = mean(TOTALTRAVELLANEWIDTH, na.rm=T),
-    TOTALPARKINGLANES    = mean(TOTALPARKINGLANES, na.rm=T),
-    DCFUNCTIONALCLASS    = mean(DCFUNCTIONALCLASS, na.rm=T),
-    WARD_ID              = mean(WARD_ID, na.rm=T),
-    total_change_trips   = mean(total_change_trips, na.rm=T),
-    
-    across(ends_with("_per_acre"), \(x) mean(x, na.rm = TRUE)),
-    
-    treatment                            = mean(treatment, na.rm=T),
-    mean_crashes_pre2019                 = mean(mean_crashes_pre2019, na.rm=T)
-            ) %>%
-  ungroup()
-
-# run_regs(df = cd_pbl_clean_simplified, outcome = "crashes_per_acre", F)
-# run_regs(df = cd_pbl_clean_simplified, outcome = "injury_crashes_per_acre", F)
-# run_regs(df = cd_pbl_clean_simplified, outcome = "driver_injury_crashes_per_acre", F)
-# run_regs(df = cd_pbl_clean_simplified, outcome = "serious_driver_injury_crashes_per_acre", F)
-# run_regs(df = cd_pbl_clean_simplified, outcome = "bike_injury_crashes_per_acre", F)
-# run_regs(df = cd_pbl_clean_simplified, outcome = "serious_bike_injury_crashes_per_acre", F)
-# run_regs(df = cd_pbl_clean_simplified, outcome = "ped_injury_crashes_per_acre", F)
-# run_regs(df = cd_pbl_clean_simplified, outcome = "serious_ped_injury_crashes_per_acre", F)
 ```
 
 
-```{r, fig.width=12}
+```{r}
 run_regs <- function(df, outcome, include_year = TRUE) {
   root_reg <- paste0(outcome, " ~ treatment + post_install + treatment*post_install")
   year_term <- ifelse(include_year, " + as.factor(year)", "")
@@ -551,22 +360,22 @@ run_regs <- function(df, outcome, include_year = TRUE) {
 }
 
 
-plot_effects <- function(outcomes) {
+plot_effects <- function(outcomes, df) {
   results <- map_dfr(outcomes, \(o) {
-    run_regs(df = cd_pbl_clean_simplified, outcome = o, include_year = FALSE)
+    run_regs(df = df, outcome = o, include_year = FALSE)
   })
   
   results <- results |>
-    mutate(
-      significance = case_when(
+    mutate(significance = case_when(
         p.value < 0.001 ~ "p < 0.001",
         p.value < 0.01  ~ "p < 0.01",
         p.value < 0.05  ~ "p < 0.05",
-        TRUE            ~ "p ≥ 0.05"
+        p.value < 0.10  ~ "p < 0.10",
+        TRUE            ~ "p ≥ 0.10"
       ),
       significance = factor(significance,
                             levels = c("p < 0.001", "p < 0.01",
-                                       "p < 0.05",  "p ≥ 0.05")),
+                                       "p < 0.05", "p < 0.10",  "p ≥ 0.10")),
       model  = factor(model, levels = c("simple", "full"),
                       labels = c("Simple model", "Full model")),
       outcome = factor(outcome, levels = outcomes) |> # preserve ordering
@@ -575,28 +384,29 @@ plot_effects <- function(outcomes) {
                                 str_to_sentence())
     )
   
-  
   sig_colors <- c(
-    "p < 0.001" = "#2166ac",
-    "p < 0.01"  = "#74add1",
-    "p < 0.05"  = "#fdae61",
-    "p ≥ 0.05"  = "#d9d9d9"
+    "p < 0.001"       = "#2166ac",
+    "p < 0.01"        = "#74add1",
+    "p < 0.05"        = "#fdae61",
+    "p < 0.10"        = "#fee08b",
+    "p ≥ 0.10"        = "#d9d9d9"
   )
   
   ggplot(
-         filter(results, model=="Simple model"), 
+          results,
+         # filter(results, model=="Simple model"), 
          aes(x = outcome, y = estimate, fill = significance)) +
     geom_col(position = position_dodge(width = 0.7), width = 0.6) +
     geom_errorbar(
-      aes(ymin = estimate - 1.96 * std.error,
-          ymax = estimate + 1.96 * std.error),
+      aes(ymin = estimate - 1.645 * std.error,
+          ymax = estimate + 1.645 * std.error),
       position = position_dodge(width = 0.7),
       width = 0.2, color = "grey30"
     ) +
     geom_hline(yintercept = 0, color = "black", linewidth = 0.5) +
     scale_fill_manual(values = sig_colors, drop = FALSE) +
     scale_x_discrete(labels = \(x) str_replace_all(x, "_", "\n")) +
-    # facet_wrap(~model) +
+    facet_wrap(~model, ncol=1) +
     labs(
       title = "Effect of protected bike lane installation on crash outcomes",
       subtitle = "Coefficient on treatment × post-install interaction",
@@ -626,16 +436,17 @@ plot_effects(
       
       "ped_injury_crashes_per_acre",
       "serious_ped_injury_crashes_per_acre"
-      )
+      ),
+  df = filter(cd_pbl_clean_simplified, (switcher == 1) | (never_taker == 1) | (late_taker == 1))  
   )
 
-plot_effects(
-  outcomes = c(
-      "total_vehicles_per_acre",
-      "total_bikes_per_acre",
-      "total_peds_per_acre"
-      )
-  )
+# plot_effects(
+#   outcomes = c(
+#       "total_vehicles_per_acre",
+#       "total_bikes_per_acre",
+#       "total_peds_per_acre"
+#       )
+#   )
 ```
 
 
@@ -657,7 +468,7 @@ plot_effects(
 
 summary_df <-
   cd_pbl_clean_simplified |>
-  select(SUBBLOCKKEY, post_install, treatment, ends_with("_per_acre")) |>
+  select(!!!sym(ANALYSIS_LEVEL), post_install, treatment, ends_with("_per_acre")) |>
   pivot_longer(cols = all_of(outcomes),
                names_to  = "outcome",
                values_to = "value") |>
