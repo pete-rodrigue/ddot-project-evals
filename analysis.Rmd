@@ -26,6 +26,7 @@ library(sf)
 library(leaflet)
 library(tidyr)
 library(tidyverse)
+library(plotly)
 
 # google sheet w/ the data:
 url <- "https://docs.google.com/spreadsheets/d/e/2PACX-1vQtDsTt9VVyn-wptsMT6vxtCM2J1dPYWji90OOWj1v4c4pPz6Kwa6mQtOk096EU3npvJ9g4fcjnwLpp/pub?gid=1445637369&single=true&output=csv"
@@ -101,6 +102,280 @@ rm(df); rm(to_plot); rm(url)
 ```
 
 
+```{r}
+# TODO: replicate DDOT results
+injury_vars <- c(
+    "MAJORINJURIES_BICYCLIST",   "MINORINJURIES_BICYCLIST",
+    "UNKNOWNINJURIES_BICYCLIST", "FATAL_BICYCLIST",
+    "MAJORINJURIES_DRIVER",      "MINORINJURIES_DRIVER",
+    "UNKNOWNINJURIES_DRIVER",    "FATAL_DRIVER",
+    "MAJORINJURIES_PEDESTRIAN",  "MINORINJURIES_PEDESTRIAN",
+    "UNKNOWNINJURIES_PEDESTRIAN","FATAL_PEDESTRIAN",
+    "TOTAL_VEHICLES", "TOTAL_BICYCLES", "TOTAL_PEDESTRIANS"
+  )
+
+
+# load data:
+source("load_data.R")
+# load crash data:
+cd <- load_crash_data()
+crash_details <- read_csv("data/Crash_Details_Table.csv", show_col_types = F)
+# load project shapefiles:
+ddot_projs <- 
+  st_read("data/ddot-evaluated-projects.geojson", quiet=T) |>
+  st_transform(4326) 
+
+ddot_projs_buf <-
+  ddot_projs |>
+  st_transform(6487) |>               # EPSG:6487 — NAD83 / Maryland (metres)
+  st_buffer(dist = 40,                # X m buffer
+            endCapStyle = "FLAT"
+            ) |>  
+  st_transform(st_crs(ddot_projs))    # reproject back to match cd's CRS
+
+cd_in_projs <- 
+  cd |> 
+  # Join crashes to buffers — one crash can match multiple buffers, since the buffers can overlap
+  st_join(ddot_projs_buf, join = st_within, left = FALSE) |>
+  st_drop_geometry()
+
+
+cd_in_projs_sf <- 
+  st_as_sf(
+    filter(cd, CRIMEID %in% cd_in_projs$CRIMEID), 
+    coords = c("crash_lng", "crash_lat"), crs = 4326) |>
+  dplyr::left_join(select(cd_in_projs, CRIMEID, project_name), by="CRIMEID")
+
+# plot the projects:
+source("make_plots.R")
+
+plot_leaflet(
+  lines_sf = ddot_projs, 
+  polygons_sf = ddot_projs_buf, 
+  points_sf = cd_in_projs_sf
+  )
+
+
+cd_in_projs_summed <-
+  cd_in_projs |>
+  group_by(project_name, month, year) |>
+  summarize(
+    n_crashes = n(),
+    n_vehicle_crashes = sum(TOTAL_VEHICLES    > 0, na.rm = TRUE),
+    n_bike_crashes    = sum(TOTAL_BICYCLES    > 0, na.rm = TRUE),
+    n_peds_crashes    = sum(TOTAL_PEDESTRIANS > 0, na.rm = TRUE),
+    across(all_of(injury_vars), \(x) sum(x, na.rm = TRUE)),
+    .groups = "drop_last"
+    ) |>
+  ungroup()
+
+
+# Minnesota Ave dates:
+# Before: Feb 2017 - Jan 2020
+# After:  Nov 2023 - Oct 2024
+
+```
+
+```{r}
+plot_crashes_over_time <- function(data,
+                                   month_col = "month",
+                                   year_col  = "year",
+                                   period_1  = NULL,   # list(label, start, end)
+                                   period_2  = NULL) { # list(label, start, end)
+  
+  series_levels <- c("All Crashes", "Any Injury",
+                     "Vehicle Crashes", "Bike Crashes", "Pedestrian Crashes")
+  series_colors <- c(
+    "All Crashes"        = "#333333",
+    "Any Injury"         = "#999999",
+    "Vehicle Crashes"    = "#2166ac",
+    "Bike Crashes"       = "#1a9641",
+    "Pedestrian Crashes" = "#d7191c"
+  )
+  
+  # ── 1. Create date and compute series ─────────────────────────────────────
+  plot_data <- data |>
+    mutate(
+      date                 = make_date(
+                               year  = .data[[year_col]],
+                               month = .data[[month_col]],
+                               day   = 1L),
+      `All Crashes`        = n_crashes,
+      `Any Injury`         = MAJORINJURIES_BICYCLIST   + MINORINJURIES_BICYCLIST   +
+                             UNKNOWNINJURIES_BICYCLIST  + FATAL_BICYCLIST           +
+                             MAJORINJURIES_DRIVER       + MINORINJURIES_DRIVER      +
+                             UNKNOWNINJURIES_DRIVER     + FATAL_DRIVER              +
+                             MAJORINJURIES_PEDESTRIAN   + MINORINJURIES_PEDESTRIAN  +
+                             UNKNOWNINJURIES_PEDESTRIAN + FATAL_PEDESTRIAN,
+      `Vehicle Crashes`    = n_vehicle_crashes,
+      `Bike Crashes`       = n_bike_crashes,
+      `Pedestrian Crashes` = n_peds_crashes
+    ) |>
+    filter(!is.na(date)) |>
+    select(date, all_of(series_levels)) |>
+    pivot_longer(-date, names_to = "series", values_to = "n") |>
+    mutate(
+      series = factor(series, levels = series_levels),
+      panel  = if_else(series %in% c("All Crashes", "Any Injury"),
+                       "Overall", "By Mode")
+    )
+  
+  # ── 2. Period average lines for plot ───────────────────────────────────────
+  periods     <- list(period_1, period_2)
+  period_avgs <- NULL
+  
+  if (!is.null(period_1) && !is.null(period_2)) {
+    period_avgs <- map_dfr(periods, \(p) {
+      plot_data |>
+        filter(date >= as.Date(p$start), date <= as.Date(p$end)) |>
+        group_by(series, panel) |>
+        summarise(mean_n = mean(n, na.rm = TRUE), .groups = "drop") |>
+        mutate(label = p$label, start_date = as.Date(p$start), end_date = as.Date(p$end))
+    })
+  }
+  
+  # ── 3. Change table, normalized by actual days in each period ─────────────
+  if (!is.null(period_1) && !is.null(period_2)) {
+    
+    # Compute totals and day counts separately so we can verify the math
+    summarise_period <- function(p) {
+      n_days <- as.numeric(as.Date(p$end) - as.Date(p$start) + 1)
+      
+      totals <- plot_data |>
+        filter(date >= as.Date(p$start), date <= as.Date(p$end)) |>
+        group_by(series) |>
+        summarise(total_n = sum(n, na.rm = TRUE), .groups = "drop") |>
+        mutate(
+          label        = p$label,
+          n_days       = n_days,
+          per_100_days = total_n / n_days * 100
+        )
+      totals
+    }
+    
+    p1_summary <- summarise_period(period_1)
+    p2_summary <- summarise_period(period_2)
+    
+    # Print verification so you can sanity-check the normalization
+    cat("\n── Period summaries (raw totals for verification) ───────────\n")
+    cat(sprintf("   %s: %s to %s = %d days\n",
+                period_1$label, period_1$start, period_1$end,
+                unique(p1_summary$n_days)))
+    cat(sprintf("   %s: %s to %s = %d days\n",
+                period_2$label, period_2$start, period_2$end,
+                unique(p2_summary$n_days)))
+    cat("────────────────────────────────────────────────────────────\n")
+    cat("   Raw crash totals per period:\n")
+    print(
+      bind_rows(p1_summary, p2_summary) |>
+        select(series, label, total_n, n_days, per_100_days) |>
+        mutate(per_100_days = round(per_100_days, 2))
+    )
+    cat("────────────────────────────────────────────────────────────\n")
+    
+    # Final change table
+    change_table <- bind_rows(p1_summary, p2_summary) |>
+      select(series, label, per_100_days) |>
+      pivot_wider(names_from = label, values_from = per_100_days) |>
+      rename(pre = 2, post = 3) |>
+      mutate(
+        `Raw Change` = round(post - pre, 2),
+        `% Change`   = round((post - pre) / pre * 100, 1),
+        pre          = round(pre,  2),
+        post         = round(post, 2)
+      ) |>
+      rename(
+        `Outcome`                                           = series,
+        !!paste0(period_1$label, " (per 100 days)")       := pre,
+        !!paste0(period_2$label, " (per 100 days)")       := post
+      )
+    
+    cat("\n── Pre/Post Change by Outcome (per 100 days) ───────────────\n")
+    print(change_table, n = Inf)
+    cat("────────────────────────────────────────────────────────────\n\n")
+  }
+  
+  # ── 4. Panel builder ───────────────────────────────────────────────────────
+  make_panel <- function(panel_name, show_legend) {
+    
+    panel_data <- plot_data |> filter(panel == panel_name)
+    p          <- plot_ly()
+    
+    for (s in levels(panel_data$series)) {
+      d <- filter(panel_data, series == s)
+      if (nrow(d) == 0) next
+      p <- add_lines(p,
+        data        = d,
+        x           = ~date,
+        y           = ~n,
+        name        = s,
+        legendgroup = s,
+        showlegend  = show_legend,
+        line        = list(color = series_colors[s], width = 1.8)
+      )
+    }
+    
+    if (!is.null(period_avgs)) {
+      segs <- period_avgs |> filter(panel == panel_name)
+      for (i in seq_len(nrow(segs))) {
+        seg      <- segs[i, ]
+        seg_name <- paste0(as.character(seg$series), " avg (", seg$label, ")")
+        p <- add_segments(p,
+          x           = seg$start_date,
+          xend        = seg$end_date,
+          y           = seg$mean_n,
+          yend        = seg$mean_n,
+          name        = seg_name,
+          legendgroup = seg_name,
+          showlegend  = show_legend,
+          line        = list(color = series_colors[as.character(seg$series)],
+                             dash = "dash", width = 2)
+        )
+      }
+    }
+    
+    p |> plotly::layout(yaxis = list(title = "Count"))
+  }
+  
+  # ── 5. Combine panels ──────────────────────────────────────────────────────
+  subplot(
+    make_panel("Overall", show_legend = TRUE),
+    make_panel("By Mode", show_legend = FALSE),
+    nrows   = 2,
+    shareX  = TRUE,
+    titleY  = TRUE,
+    heights = c(0.5, 0.5)
+  ) |>
+    plotly::layout(
+      hovermode = "x unified",
+      legend    = list(orientation = "h", x = 0, y = -0.1),
+      xaxis     = list(title = ""),
+      annotations = list(
+        list(text = "Overall", x = 0, y = 1.02, xref = "paper", yref = "paper",
+             showarrow = FALSE, font = list(size = 13)),
+        list(text = "By Mode", x = 0, y = 0.47, xref = "paper", yref = "paper",
+             showarrow = FALSE, font = list(size = 13))
+      )
+    )
+}
+
+# Usage:
+# plot_crashes_over_time(
+#   data      = filter(cd_in_projs_summed, project_name == "Minnesota Avenue SE Bus Priority Project"),
+#   month_col = "month",
+#   year_col  = "year",
+#   period_1  = list(label = "Pre-PBL",  start = "2017-02-01", end = "2020-01-31"),
+#   period_2  = list(label = "Post-PBL", start = "2023-11-01", end = "2024-10-31")
+# )
+
+plot_crashes_over_time(
+  data      = filter(cd_in_projs_summed, year>=2016 & project_name == "Minnesota Avenue SE Bus Priority Project"), 
+  month_col = "month",
+  year_col  = "year",
+  period_1  = list(label = "Pre",  start = "2017-02-01", end = "2020-01-31"),
+  period_2  = list(label = "Post", start = "2023-11-01", end = "2024-10-31")
+  )
+```
 
 
 
@@ -171,10 +446,15 @@ PBLS_ONLY = TRUE
 # a bbox for map plotting so we don't plot tons of data at once:
 PLOT_BBOX = c(xmin = -77.015, ymin = 38.94, xmax = -77.010, ymax = 38.944)
 
+# load data:
+cd                <- load_crash_data()
+pbl               <- load_pbl_data(PBLS_ONLY)
+cabi_sf           <- load_cabi_data()[[1]]
+annual_cabi_rides <- load_cabi_data()[[2]]
+rs                <- load_subblocks()
+
 # source the R script in which we load all of the data:
-source("load_data.R")
 source("prepare_timeseries.R")
-source("make_plots.R")
 
 plot_vars <- c(
   "crashes_per_acre",
@@ -212,7 +492,6 @@ group_labels <- c(
 )
 
 
-
 # clean the data:
 res <- prepare_timeseries()
 cd_pbl_clean_simplified <- res[[1]]
@@ -226,9 +505,7 @@ cd_pbl_clean_simplified <- res[[1]]
 ```
 
 
-```{r}
-# TODO: replicate DDOT results
-```
+
 
 ```{r, fig.width=12}
 ecdf_plots <- map(set_names(group_types), \(g) make_ecdf_plots(cd_pbl_clean_simplified, g))
@@ -468,6 +745,7 @@ plot_effects(
 
 summary_df <-
   cd_pbl_clean_simplified |>
+  filter(switcher == 1 | never_taker == 1) |>
   select(!!!sym(ANALYSIS_LEVEL), post_install, treatment, ends_with("_per_acre")) |>
   pivot_longer(cols = all_of(outcomes),
                names_to  = "outcome",

@@ -17,16 +17,17 @@
 #     stroke=F, color="red", radius = 4)
 
 
-plot_leaflet <- function(points_sf = NULL, polygons_sf = NULL, bbox = NULL) {
+plot_leaflet <- function(points_sf = NULL, polygons_sf = NULL, lines_sf = NULL, bbox = NULL) {
   
   # Validate that at least one layer is provided
-  if (is.null(points_sf) && is.null(polygons_sf)) {
-    stop("At least one of points_sf or polygons_sf must be provided.")
+  if (is.null(points_sf) && is.null(polygons_sf) && is.null(lines_sf)) {
+    stop("At least one of points_sf, polygons_sf, or lines_sf must be provided.")
   }
   
   # Leaflet requires WGS84
   if (!is.null(points_sf))   points_sf   <- st_transform(points_sf,   4326)
   if (!is.null(polygons_sf)) polygons_sf <- st_transform(polygons_sf, 4326)
+  if (!is.null(lines_sf))    lines_sf    <- st_transform(lines_sf,    4326)
   
   if (!is.null(bbox)) {
     crop_box <- st_bbox(
@@ -36,6 +37,7 @@ plot_leaflet <- function(points_sf = NULL, polygons_sf = NULL, bbox = NULL) {
     )
     if (!is.null(points_sf))   points_sf   <- st_crop(points_sf,   crop_box)
     if (!is.null(polygons_sf)) polygons_sf <- st_crop(polygons_sf, crop_box)
+    if (!is.null(lines_sf))    lines_sf    <- st_crop(lines_sf,    crop_box)
   }
   
   m <- leaflet() |>
@@ -51,13 +53,23 @@ plot_leaflet <- function(points_sf = NULL, polygons_sf = NULL, bbox = NULL) {
       )
   }
   
+  if (!is.null(lines_sf)) {
+    m <- m |>
+      addPolylines(
+        data   = lines_sf,
+        color  = "green",
+        weight = 3,
+        opacity = 0.8
+      )
+  }
+  
   if (!is.null(points_sf)) {
     m <- m |>
       addCircleMarkers(
         data        = points_sf,
         color       = "red",
         fillColor   = "red",
-        fillOpacity = .7,
+        fillOpacity = 0.7,
         stroke      = FALSE,
         radius      = 4
       )
@@ -67,10 +79,10 @@ plot_leaflet <- function(points_sf = NULL, polygons_sf = NULL, bbox = NULL) {
 }
 
 # Usage:
-# plot_leaflet(points_sf = my_points, polygons_sf = my_polygons)
-# plot_leaflet(points_sf = my_points)
-# plot_leaflet(polygons_sf = my_polygons, bbox = c(xmin = -77.044, ymin = 38.909,
-#                                                   xmax = -77.010, ymax = 38.944))
+# plot_leaflet(lines_sf = my_lines)
+# plot_leaflet(points_sf = my_points, lines_sf = my_lines)
+# plot_leaflet(points_sf = my_points, polygons_sf = my_polys, lines_sf = my_lines,
+#              bbox = c(xmin = -77.044, ymin = 38.909, xmax = -77.010, ymax = 38.944))
 
 
 make_density_plots <- function(data, group_col, log_transform = FALSE) {
