@@ -85,6 +85,125 @@ plot_leaflet <- function(points_sf = NULL, polygons_sf = NULL, lines_sf = NULL, 
 #              bbox = c(xmin = -77.044, ymin = 38.909, xmax = -77.010, ymax = 38.944))
 
 
+plot_crashes_over_time <- function(data, smoothing_factor = 1,
+                                   period_1 = NULL, period_2 = NULL,
+                                   title = NULL) {
+  
+  series_levels <- c("All Crashes", "Any Injury",
+                     "Vehicle Crashes", "Bike Crashes",      "Pedestrian Crashes",
+                     "Driver Injury",   "Bicyclist Injury",  "Pedestrian Injury")
+  
+  series_colors <- c(
+    "All Crashes"        = "#636363",
+    "Any Injury"         = "#bdbdbd",
+    "Vehicle Crashes"    = "#2166ac",
+    "Driver Injury"      = "#74add1",
+    "Bike Crashes"       = "#1a7837",
+    "Bicyclist Injury"   = "#7fbf7b",
+    "Pedestrian Crashes" = "#d7191c",
+    "Pedestrian Injury"  = "#f4a582"
+  )
+  
+  panel_map <- c(
+    "All Crashes"        = "Overall",
+    "Any Injury"         = "Overall",
+    "Vehicle Crashes"    = "Vehicle",
+    "Driver Injury"      = "Vehicle",
+    "Bike Crashes"       = "Bike",
+    "Bicyclist Injury"   = "Bike",
+    "Pedestrian Crashes" = "Pedestrian",
+    "Pedestrian Injury"  = "Pedestrian"
+  )
+  
+  # ── 1. Compute series ───────────────────────────────────────────────────────
+  plot_data <- data |>
+    select(date, all_of(series_levels)) |>
+    pivot_longer(-date, names_to = "series", values_to = "n") |>
+    arrange(series, date) |>
+    group_by(series) |>
+    mutate(value_smooth = rollmean(n, k = smoothing_factor, fill = NA, align = "right")) |>
+    ungroup() |>
+    mutate(
+      series = factor(series, levels = series_levels),
+      panel  = factor(panel_map[as.character(series)],
+                      levels = c("Overall", "Vehicle", "Bike", "Pedestrian"))
+    )
+  
+  # ── 2. Build plot ───────────────────────────────────────────────────────────
+  p <- ggplot(plot_data, aes(x = date, y = value_smooth, color = series)) +
+    geom_line(linewidth = 0.7, alpha = 0.8, na.rm = TRUE) +
+    facet_wrap(~ panel, ncol = 1, scales = "free_y") +
+    scale_color_manual(values = series_colors) +
+    scale_x_date(date_breaks = "6 months", date_labels = "%b %Y") +
+    labs(x = NULL, y = "Count", color = NULL) +
+    theme_minimal(base_size = 11) +
+    theme(
+      legend.position  = "bottom",
+      strip.text       = element_text(face = "bold", size = 10),
+      axis.text.x      = element_text(angle = 45, hjust = 1),
+      panel.grid.minor = element_blank()
+    ) +
+    guides(color = guide_legend(nrow = 2)) +
+    ggtitle(title) +
+    theme(legend.position="none")
+  
+  # ── 3. Add period shading ───────────────────────────────────────────────────
+  p <- p +
+    annotate("rect",
+             xmin = as.Date(period_1$start), xmax = as.Date(period_1$end),
+             ymin = -Inf, ymax = Inf,
+             fill = "#2166ac", alpha = 0.08
+    ) 
+  
+  p <- p +
+    annotate("rect",
+             xmin = as.Date(period_2$start), xmax = as.Date(period_2$end),
+             ymin = -Inf, ymax = Inf,
+             fill = "#d7191c", alpha = 0.08
+    ) 
+  
+  # ── 4. Summary table: outcomes per month in each period ─────────────────────
+  summarise_period <- function(p) {
+    n_months <- interval(as.Date(p$start), as.Date(p$end)) %/% months(1) + 1
+    
+    plot_data |>
+      filter(date >= as.Date(p$start), date <= as.Date(p$end)) |>
+      group_by(series) |>
+      summarise(total = sum(n, na.rm = TRUE), .groups = "drop") |>
+      mutate(
+        label        = p$label,
+        n_months     = n_months,
+        per_month    = total / n_months
+      )
+  }
+  
+  summary_data <- bind_rows(
+    summarise_period(period_1),
+    summarise_period(period_2)
+  ) |>
+    select(series, label, total, n_months, per_month) |>
+    pivot_wider(
+      names_from  = label,
+      values_from = c(total, n_months, per_month),
+      names_glue  = "{label}_{.value}"
+    ) |>
+    select(series, ends_with("_per_month")) |>
+    mutate(
+      pct_change = round((!!sym(paste0(period_2$label, "_per_month")) -
+                            !!sym(paste0(period_1$label, "_per_month"))) /
+                           !!sym(paste0(period_1$label, "_per_month")) * 100, 1),
+      across(ends_with("_per_month"), round, digits = 2)
+    )
+  
+  
+  return(list(p, plot_data, summary_data))
+}
+
+
+
+
+
+
 make_density_plots <- function(data, group_col, log_transform = FALSE) {
   
   plot_data <- data |>

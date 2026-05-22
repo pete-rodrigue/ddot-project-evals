@@ -1,5 +1,5 @@
 ---
-title: "DDOT project evaluations"
+title: "Analyzing DDOT projects"
 author: "pete rodrigue"
 date: "`r Sys.Date()`"
 output:
@@ -8,7 +8,15 @@ output:
 ---
 
 
-DDOT conducts evaluations of their bus priority and bike infrastruture projects. Here's a summary of what those evaluations have found.
+This document looks at a bunch of DDOT data that's super cool but a little buried on their website. We'll do 3 things:
+
+* DDOT conducts evaluations of their bus priority and bike infrastructure projects. We'll look at those evaluations and try to replicate them.
+* We'll also try to scale those evaluations to a bunch of other project that aren't on DDOT's evaluations page, using the same crash data.
+* Finally, we'll look at some neat data DDOT staff collect by standing on streets and watching people bike by.
+
+
+To view the code in this document, click the "show" buttons on the right. Some of this analysis also uses supporting functions I put in a separate set of files; you can find all of the code here: https://github.com/pete-rodrigue/ddot-project-evals 
+
 
 ```{r setup, message=F, warning=F}
 knitr::opts_chunk$set(echo = TRUE, fig.width = 8, message=F, warning=F)
@@ -28,55 +36,70 @@ library(tidyr)
 library(tidyverse)
 library(plotly)
 library(zoo)
+```
 
+```{r}
 # google sheet w/ the data:
 url <- "https://docs.google.com/spreadsheets/d/e/2PACX-1vQtDsTt9VVyn-wptsMT6vxtCM2J1dPYWji90OOWj1v4c4pPz6Kwa6mQtOk096EU3npvJ9g4fcjnwLpp/pub?gid=1445637369&single=true&output=csv"
 
 # load the data from the google sheet:
-df <- read_csv(url, show_col_types = F)
+df <- 
+  read_csv(url, show_col_types = F) %>%
+  filter(`Project name` != "15 St NW") %>%
+  mutate(
+    `Project short name` = 
+      case_when(
+          `Project name` == "16th Street NW Bus Priority Project" ~ "16 ST NW",
+          `Project name` == "9th Street NW Protected Bike Lane" ~ "9 ST NW",
+          `Project name` == "G Street NW Protected Bike Lane" ~ "G ST NW",
+          `Project name` == "Minnesota Avenue SE Bus Priority Project" ~ "MN AVE SE",
+          `Project name` == "Pennsylvania Avenue SE Bus Priority Project" ~ "PA AVE NW",
+          `Project name` == "Virginia Avenue NW Protected Bike Lane" ~ "VA AVE NW",
+          .default = NA
+        )
+  )
 ```
 
+## DDOT's bus and bike project evaluations
+
+First let's look at some of the results from DDOT's detailed before-after analyses of their projects:
+
+<br>
 
 ```{r}
 to_plot <-
   df %>%
-  filter(Outcome %in% c("Injury crashes", "All crashes")) %>%
+  filter(Outcome %in% c("Any Injury", "All Crashes")) %>%
   mutate(Change = Change*-1)
 
 ggplot(to_plot) +
-  geom_bar(aes(x=`Project name`, y=Change, fill=Outcome), stat="identity", position="dodge") +
+  geom_bar(aes(x=`Project short name`, y=Change, fill=Outcome), stat="identity", position="dodge") +
   labs(y="% decrease in crashes", x="") +
   ggtitle("All projects saw decreases in crashes") +
-  geom_hline(aes(yintercept=mean(Change[Outcome == "All crashes"], na.rm=T)), 
+  geom_hline(aes(yintercept=mean(Change[Outcome == "All Crashes"], na.rm=T)), 
              color="#F8766D", linetype="dashed", linewidth=.8, alpha=.5) +
-  geom_hline(aes(yintercept=mean(Change[Outcome == "Injury crashes"], na.rm=T)), 
+  geom_hline(aes(yintercept=mean(Change[Outcome == "Any Injury"], na.rm=T)), 
              color="#00BFC4", linetype="dashed", linewidth=.8, alpha=.5) +
   theme_minimal() +
   theme(legend.title = element_blank())
-```
 
-```{r}
 to_plot <-
   df %>%
-  filter(Outcome %in% c("Pedestrian injury crashes")) %>%
+  filter(Outcome %in% c("Pedestrian Injury")) %>%
   mutate(Change = Change*-1)
 
 ggplot(to_plot) +
-  geom_bar(aes(x=`Project name`, y=Change), stat="identity", fill="seagreen") +
+  geom_bar(aes(x=`Project short name`, y=Change), stat="identity", fill="seagreen") +
   labs(y="% decrease in crashes", x="") +
   ggtitle("Pedestrian crashes fell after project completion, sometimes to zero") +
   geom_hline(aes(yintercept=mean(Change, na.rm=T)), color="grey", linetype="dashed", size=1) +
   theme_minimal() +
   theme(legend.title = element_blank())
-```
 
-
-
-```{r}
 to_plot <-
   df %>%
   filter(str_detect(Outcome, "Private motor vehicle")) %>%
-  group_by(`Project name`, Outcome) %>%
+  group_by(`Project short name`, Outcome) %>%
   summarize(change = mean(Change, na.rm=T)) %>%
   ungroup() %>%
   mutate(Outcome = ifelse(Outcome == "Private motor vehicle AM peak travel time (seconds)", 
@@ -85,7 +108,7 @@ to_plot <-
 
 ggplot(to_plot) +
   geom_point(
-    aes(x=change, color=Outcome, y=`Project name`), size=3, alpha=.7
+    aes(x=change, color=Outcome, y=`Project short name`), size=3, alpha=.7
   ) +
   geom_vline(aes(xintercept=0), color="black") +
   geom_vline(aes(xintercept=mean(change[Outcome == "AM traffic travel time"], na.rm=T)), color="#F8766D", linetype="dashed") +
@@ -95,11 +118,8 @@ ggplot(to_plot) +
   xlim(c(min(to_plot$change)-10, max(to_plot$change)+25)) +
   theme(legend.title = element_blank()) +
   ggtitle("Drivers' travel times faster on average after project completion")
-```
 
-
-```{r}
-rm(df); rm(to_plot); rm(url)
+rm(to_plot); rm(url)
 ```
 
 
@@ -117,178 +137,144 @@ cd <- load_crash_data()
 # load project shapefiles:
 ddot_projs <- 
   st_read("data/ddot-evaluated-projects.geojson", quiet=T) |>
-  st_transform(4326) 
+  st_transform(4326) |>
+  filter(project_name != "Minnesota Ave Bike Lane Project")
 
-ddot_projs_buf <-
-  ddot_projs |>
-  st_transform(6487) |>               # EPSG:6487 — NAD83 / Maryland (metres)
-  st_buffer(dist = 4,                # X m buffer
-            endCapStyle = "FLAT"
-            ) |>  
-  st_transform(st_crs(ddot_projs))    # reproject back to match cd's CRS
+get_crashes_in_corridors <- function(line_sf, crashes_sf, buffer_in_meters) {
+  mybuffer <-
+    line_sf |>
+    st_transform(6487) |>               # EPSG:6487 — NAD83 / Maryland (metres)
+    st_buffer(dist = buffer_in_meters,  # X m buffer
+              endCapStyle = "FLAT"
+              ) |>  
+    st_transform(st_crs(ddot_projs))    # reproject back to match cd's CRS
+  
+  crashes_near_projects <- st_join(crashes_sf, mybuffer, join = st_within, left = FALSE)
+  
+  crashes_near_projects
+}
 
-crashes_near_projects <- st_join(cd, ddot_projs_buf, join = st_within, left = FALSE)
+group_corridor_crashes_by_month <- function(df, group_by_vars = NA, outcome_vars) {
+    df                                      |>
+    st_drop_geometry()                      |>
+    group_by(across(all_of(group_by_vars))) |>
+    summarize(
+      `All Crashes` = n(),
+      across(all_of(outcome_vars), \(x) sum(x, na.rm = TRUE)),
+      .groups = "drop_last"
+      )                                     |>
+    ungroup()
+}
 
-# plot the projects:
-source("make_plots.R")
+crashes_near_projects <- get_crashes_in_corridors(line_sf = ddot_projs, crashes_sf = cd, buffer_in_meters = 4)
 
-plot_leaflet(
-  lines_sf = ddot_projs, 
-  polygons_sf = ddot_projs_buf, 
-  points_sf = crashes_near_projects
-  )
-
-
-cd_in_projs_summed <-
-  crashes_near_projects |>
-  st_drop_geometry()    |>
-  group_by(project_name, month, year, date) |>
-  summarize(
-    `All Crashes` = n(),
-    across(all_of(outcome_vars), \(x) sum(x, na.rm = TRUE)),
-    .groups = "drop_last"
-    ) |>
-  ungroup()
+cd_in_projs_summed <- 
+  group_corridor_crashes_by_month(df = crashes_near_projects, 
+                                  group_by_vars = c("project_name", "month", "year", "date"),
+                                  outcome_vars = outcome_vars)
 
 
-# Minnesota Ave dates:
-# Before: Feb 2017 - Jan 2020
-# After:  Nov 2023 - Oct 2024
 
 ```
 
 ```{r, fig.width=10, fig.height=8}
-plot_crashes_over_time <- function(data, smoothing_factor = 1,
-                                   period_1 = NULL, period_2 = NULL,
-                                   title = NULL) {
-  
-  series_levels <- c("All Crashes", "Any Injury",
-                     "Vehicle Crashes", "Bike Crashes",      "Pedestrian Crashes",
-                     "Driver Injury",   "Bicyclist Injury",  "Pedestrian Injury")
-  
-  series_colors <- c(
-    "All Crashes"        = "#636363",
-    "Any Injury"         = "#bdbdbd",
-    "Vehicle Crashes"    = "#2166ac",
-    "Driver Injury"      = "#74add1",
-    "Bike Crashes"       = "#1a7837",
-    "Bicyclist Injury"   = "#7fbf7b",
-    "Pedestrian Crashes" = "#d7191c",
-    "Pedestrian Injury"  = "#f4a582"
+# plot the projects:
+source("make_plots.R")
+# create a list that has the project names and pre & post dates:
+proj_dates <-
+  list(
+     "Minnesota Avenue SE Bus Priority Project" = 
+       list(
+        period_1         = list(label = "Pre",  start = "2017-02-01", end = "2020-01-31"),
+        period_2         = list(label = "Post", start = "2023-11-01", end = "2024-10-31")
+       ),
+     "Pennsylvania Avenue SE Bus Priority Project" = 
+       list(
+        period_1         = list(label = "Pre",  start = "2018-06-01", end = "2022-05-31"),
+        period_2         = list(label = "Post", start = "2024-05-01", end = "2024-08-31") 
+       ),
+     "9th Street NW Protected Bike Lane" = 
+       list(
+        period_1         = list(label = "Pre",  start = "2016-02-01", end = "2020-01-31"),
+        period_2         = list(label = "Post", start = "2023-10-01", end = "2024-09-30") 
+       ),
+     "Virginia Avenue NW Protected Bike Lane" = 
+       list(
+        period_1         = list(label = "Pre",  start = "2018-04-01", end = "2022-03-31"),
+        period_2         = list(label = "Post", start = "2023-04-01", end = "2024-03-31") 
+       ),
+     "21st Street NW Protected Bike Lane" = 
+       list(
+        period_1         = list(label = "Pre",  start = "2017-02-01", end = "2020-01-31"),
+        period_2         = list(label = "Post", start = "2023-11-01", end = "2024-10-31") 
+       ),
+     "16th Street NW Bus Priority Project" = 
+       list(
+        period_1         = list(label = "Pre",  start = "2017-02-01", end = "2020-01-31"),
+        period_2         = list(label = "Post", start = "2023-01-01", end = "2024-12-31") 
+       ),
+     "G Street NW Protected Bike Lane" = 
+       list(
+        period_1         = list(label = "Pre",  start = "2018-03-01", end = "2020-02-29"),
+        period_2         = list(label = "Post", start = "2021-03-01", end = "2024-02-29") 
+       )
   )
-  
-  panel_map <- c(
-    "All Crashes"        = "Overall",
-    "Any Injury"         = "Overall",
-    "Vehicle Crashes"    = "Vehicle",
-    "Driver Injury"      = "Vehicle",
-    "Bike Crashes"       = "Bike",
-    "Bicyclist Injury"   = "Bike",
-    "Pedestrian Crashes" = "Pedestrian",
-    "Pedestrian Injury"  = "Pedestrian"
+
+```
+
+Below is a quick look at all of the crashes in these project corridors. Note that DDOT seems to map all of these crashes to the roadway center line. I just drew the corridor center lines by hand in Felt GIS, and then made a little buffer aroud each center line in R. I assigned all of the crashes that fell within that buffer to the corridor. 
+
+```{r}
+plot_leaflet(
+  lines_sf = ddot_projs, 
+  # polygons_sf = ddot_projs_buf, 
+  points_sf = crashes_near_projects
   )
-  
-  # ── 1. Compute series ───────────────────────────────────────────────────────
-  plot_data <- data |>
-    select(date, all_of(series_levels)) |>
-    pivot_longer(-date, names_to = "series", values_to = "n") |>
-    arrange(series, date) |>
-    group_by(series) |>
-    mutate(value_smooth = rollmean(n, k = smoothing_factor, fill = NA, align = "right")) |>
-    ungroup() |>
-    mutate(
-      series = factor(series, levels = series_levels),
-      panel  = factor(panel_map[as.character(series)],
-                      levels = c("Overall", "Vehicle", "Bike", "Pedestrian"))
-    )
-  
-  # ── 2. Build plot ───────────────────────────────────────────────────────────
-  p <- ggplot(plot_data, aes(x = date, y = value_smooth, color = series)) +
-    geom_line(linewidth = 0.7, alpha = 0.8, na.rm = TRUE) +
-    facet_wrap(~ panel, ncol = 1, scales = "free_y") +
-    scale_color_manual(values = series_colors) +
-    scale_x_date(date_breaks = "6 months", date_labels = "%b %Y") +
-    labs(x = NULL, y = "Count", color = NULL) +
-    theme_minimal(base_size = 11) +
-    theme(
-      legend.position  = "bottom",
-      strip.text       = element_text(face = "bold", size = 10),
-      axis.text.x      = element_text(angle = 45, hjust = 1),
-      panel.grid.minor = element_blank()
-    ) +
-    guides(color = guide_legend(nrow = 2)) +
-    ggtitle(title)
-  
-  # ── 3. Add period shading ───────────────────────────────────────────────────
-  p <- p +
-    annotate("rect",
-      xmin = as.Date(period_1$start), xmax = as.Date(period_1$end),
-      ymin = -Inf, ymax = Inf,
-      fill = "#2166ac", alpha = 0.08
-    ) 
+```
 
-  p <- p +
-    annotate("rect",
-      xmin = as.Date(period_2$start), xmax = as.Date(period_2$end),
-      ymin = -Inf, ymax = Inf,
-      fill = "#d7191c", alpha = 0.08
-    ) 
-  
-  # ── 4. Summary table: outcomes per month in each period ─────────────────────
-  summarise_period <- function(p) {
-    n_months <- interval(as.Date(p$start), as.Date(p$end)) %/% months(1) + 1
-    
-    plot_data |>
-      filter(date >= as.Date(p$start), date <= as.Date(p$end)) |>
-      group_by(series) |>
-      summarise(total = sum(n, na.rm = TRUE), .groups = "drop") |>
-      mutate(
-        label        = p$label,
-        n_months     = n_months,
-        per_month    = total / n_months
-      )
-  }
-  
-  summary_data <- bind_rows(
-    summarise_period(period_1),
-    summarise_period(period_2)
-  ) |>
-    select(series, label, total, n_months, per_month) |>
-    pivot_wider(
-      names_from  = label,
-      values_from = c(total, n_months, per_month),
-      names_glue  = "{label}_{.value}"
-    ) |>
-    select(series, ends_with("_per_month")) |>
-    mutate(
-      pct_change = round((!!sym(paste0(period_2$label, "_per_month")) -
-                          !!sym(paste0(period_1$label, "_per_month"))) /
-                          !!sym(paste0(period_1$label, "_per_month")) * 100, 1),
-      across(ends_with("_per_month"), round, digits = 2)
-    )
-  
-  
-  return(list(p, plot_data, summary_data))
-}
+<br><br>
 
+## Replicating DDOT project evaluations {.tabset}
 
+Below, we try to replicate those results. The line charts are smoothed, showing a 4 month moving average. The data actually agrees pretty well! This is good, given I only had DDOT's PDF that briefly describes their methodology, not their actual code or a detailed how-to. This suggests the results are relatively robust to little choices about how to do the analysis.
+
+Crashes go down, sometimes by quite a lot, after these projects get installed. 
+
+```{r results="asis"}
 for (proj in unique(cd_in_projs_summed$project_name)) {  
+  
+  if(proj=="15th St NW/SW Protected Bike Lane") {next}
+  
+  cat("\n### ", proj, "\n") # tab headers
+  
+  periods <- proj_dates[[proj]]
+  p1      <- periods$period_1
+  p2      <- periods$period_2
   
   rvs <- plot_crashes_over_time(
     data             = filter(cd_in_projs_summed, year >= 2016 &
                               project_name == proj),      
-    smoothing_factor = 6,
-    period_1         = list(label = "Pre",  start = "2017-02-01", end = "2020-01-31"),
-    period_2         = list(label = "Post", start = "2023-11-01", end = "2024-10-31"),
+    smoothing_factor = 4,
+    period_1         = p1,
+    period_2         = p2,
     title            = proj
   )
   
   print(rvs[[1]])
-  print(rvs[[3]])
+  cat("\n")
+  print(
+    rvs[[3]] %>% 
+      dplyr::left_join(select(df, `Project name`, Outcome, Change) %>% filter(`Project name` == proj), by=c("series"="Outcome")) %>%
+      rename(pct_change_ddot = Change) %>%
+      select(-`Project name`) %>%
+      knitr::kable()
+    )
+  
+  cat("\n\n")
 }
 ```
 
-
+## {-}
 
 
 
@@ -326,11 +312,11 @@ for (proj in unique(cd_in_projs_summed$project_name)) {
 
 <br><br>
 
-DDOT looked at a few projects in depth. But we can also use DC's crash data to look at every protected and buffered bike lane in DDOT's "bike lane" shapefile.
+DDOT has looked at a few projects in depth. But we can also use DC's crash data to look at every (or almost every) protected and buffered bike lane in DDOT's "bike lane" shapefile.
 
 what we'll do:
 
-* get 10 meter buffer around every individual road segment
+* get an X meter buffer around every individual road segment
 * count the number of crashes in each buffered segment in each year
   * if crashes fall into multiple buffers, assign them to a single buffer randomly. this adds noise and will attenuate the "treatment effect"
 * merge on which segments had PBLs & buffered bike lanes installed
@@ -359,11 +345,99 @@ PLOT_BBOX = c(xmin = -77.015, ymin = 38.94, xmax = -77.010, ymax = 38.944)
 
 # load data:
 cd                <- load_crash_data()
-pbl               <- load_pbl_data(PBLS_ONLY)
+pbl               <- load_pbl_data(PBLS_ONLY) 
 cabi_sf           <- load_cabi_data()[[1]]
 annual_cabi_rides <- load_cabi_data()[[2]]
 rs                <- load_subblocks()
+```
 
+```{r}
+plot_leaflet(lines_sf = pbl)
+```
+
+```{r}
+pbl_unioned <- pbl                                     |>
+  group_by(ROUTENAME, build_year)                      |>
+  summarise(
+    min_install = min(build_year, na.rm = TRUE),
+    max_install = max(build_year, na.rm = TRUE),
+    n_segments  = n(),
+    .groups = "drop" 
+  )                                                    |>
+  filter(n_segments > 2)
+
+
+crashes_near_projects <- get_crashes_in_corridors(line_sf = pbl_unioned, crashes_sf = cd, buffer_in_meters = 4)
+crashes_near_projects$route_unique_id <- paste(crashes_near_projects$ROUTENAME, crashes_near_projects$max_install)
+
+
+cd_in_projs_summed <- 
+  group_corridor_crashes_by_month(df = crashes_near_projects, 
+                                  group_by_vars = c("route_unique_id", "month", "year", "date"),
+                                  outcome_vars = outcome_vars)
+```
+
+
+
+## Replicating DDOT project evaluations {.tabset}
+
+```{r results="asis"}
+for (proj in unique(cd_in_projs_summed$project_name)) {  
+  
+  if(proj=="15th St NW/SW Protected Bike Lane") {next}
+  
+  cat("\n### ", proj, "\n") # tab headers
+  
+  periods <- proj_dates[[proj]]
+  p1      <- periods$period_1
+  p2      <- periods$period_2
+  
+  rvs <- plot_crashes_over_time(
+    data             = filter(cd_in_projs_summed, year >= 2016 &
+                              project_name == proj),      
+    smoothing_factor = 4,
+    period_1         = p1,
+    period_2         = p2,
+    title            = proj
+  )
+  
+  print(rvs[[1]])
+  cat("\n")
+  print(
+    rvs[[3]] %>% 
+      dplyr::left_join(select(df, `Project name`, Outcome, Change) %>% filter(`Project name` == proj), by=c("series"="Outcome")) %>%
+      rename(pct_change_ddot = Change) %>%
+      select(-`Project name`) %>%
+      knitr::kable()
+    )
+  
+  cat("\n\n")
+}
+```
+
+## {-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
 # source the R script in which we load all of the data:
 source("prepare_timeseries.R")
 
@@ -418,12 +492,12 @@ cd_pbl_clean_simplified <- res[[1]]
 
 
 
-```{r, fig.width=12}
+```{r, fig.width=12, eval=F}
 ecdf_plots <- map(set_names(group_types), \(g) make_ecdf_plots(cd_pbl_clean_simplified, g))
 walk(ecdf_plots, print)
 ```
 
-```{r}
+```{r, eval=F}
 # Usage:
 summarise_outcomes_by_period(cd_pbl_clean_simplified)
 
@@ -433,13 +507,13 @@ cd_pbl_clean_simplified |>
   summarise_outcomes_by_period()
 ```
 
-```{r}
+```{r, eval=F}
 cd_pbl_clean_simplified |>
   filter(never_taker == 1) |>
   summarise_outcomes_by_period()
 ```
 
-```{r}
+```{r, eval=F}
 cd_pbl_clean_simplified |>
   filter(always_taker == 1 | switcher == 1) |>
   summarise_outcomes_by_period()
@@ -485,7 +559,7 @@ cd_pbl_clean_simplified |>
 
 
 
-```{r, fig.width=12}
+```{r, fig.width=12, eval=F}
 
 
 run_regs <- function(df, outcome, include_year=T, return_mod=F) {
@@ -525,7 +599,7 @@ run_regs <- function(df, outcome, include_year=T, return_mod=F) {
 ```
 
 
-```{r}
+```{r, eval=F}
 run_regs <- function(df, outcome, include_year = TRUE) {
   root_reg <- paste0(outcome, " ~ treatment + post_install + treatment*post_install")
   year_term <- ifelse(include_year, " + as.factor(year)", "")
@@ -639,7 +713,7 @@ plot_effects(
 
 
 
-```{r}
+```{r, eval=F}
   outcomes = c(
       "crashes_per_acre",
       "injury_crashes_per_acre",
@@ -702,7 +776,7 @@ ggplot(summary_df, aes(x = post_install, y = mean,
 
 
 
-```{r}
+```{r, eval=F}
 
 # # Get unique treated subblock keys
 # treated_keys <- cd_pbl_clean_simplified |>
