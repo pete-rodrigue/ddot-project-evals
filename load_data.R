@@ -11,45 +11,52 @@ load_crash_data <- function() {
   # load crash data
   # data downloaded from here:
   # https://opendata.dc.gov/datasets/crashes-in-dc/about
-  cd <- readr::read_csv("data/Crashes_in_DC.csv", show_col_types = F)
-  
-  # create year and month of crash variables:
-  cd$year  <- as.numeric(substr(x = cd$REPORTDATE, start = 1, stop = 4))
-  cd$month <- as.numeric(substr(x = cd$REPORTDATE, start = 6, stop = 7))
-  
+  cd <- readr::read_csv("data/Crashes_in_DC.csv", show_col_types = F) |>
+    filter(!is.na(X), !is.na(Y)) |>
+    st_as_sf(coords = c("X", "Y"), crs = 3857) |>  # tell sf the points are in Web Mercator
+    st_transform(4326) |>                          # reproject to WGS84
+    mutate(
+      crash_lon = st_coordinates(geometry)[, 1],
+      crash_lat = st_coordinates(geometry)[, 2],
+      # create year and month of crash variables:
+      year  = as.numeric(substr(x = REPORTDATE, start = 1, stop = 4)),
+      month = as.numeric(substr(x = REPORTDATE, start = 6, stop = 7))
+    ) |> 
   # remove rows with no date information:
-  cd <- filter(cd, !is.na(year))
+  filter(!is.na(year))
   
-  # this data has crashes going back to the 2000s, but the data doesn't look super complete until 2014 or so:
-  # table(cd$year)
+  # this data has crashes going back to the 2000s, but the data doesn't look super complete until 2014 or so: table(cd$year)
   # According to DDOT, the location information in the data set became much more accurate starting in 2016:
   # https://ddotwiki.atlassian.net/wiki/spaces/GIS0225/pages/2053603429/Crash+Data
   
-  # project crash data:
-  cd <- cd |>
-    st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = 4326)
-  
-  # injury variables we care about:
-  injury_vars <- c(
-    "MAJORINJURIES_BICYCLIST",   "MINORINJURIES_BICYCLIST",
-    "UNKNOWNINJURIES_BICYCLIST", "FATAL_BICYCLIST",
-    "MAJORINJURIES_DRIVER",      "MINORINJURIES_DRIVER",
-    "UNKNOWNINJURIES_DRIVER",    "FATAL_DRIVER",
-    "MAJORINJURIES_PEDESTRIAN",  "MINORINJURIES_PEDESTRIAN",
-    "UNKNOWNINJURIES_PEDESTRIAN","FATAL_PEDESTRIAN",
-    "TOTAL_VEHICLES", "TOTAL_BICYCLES", "TOTAL_PEDESTRIANS"
-  )
-  
   # subset to just variables we care about:
-  cd <- select(cd, CRIMEID, year, month, injury_vars)
-  
-  coords <- st_coordinates(cd)
-  cd$crash_lon <- coords[, "X"]
-  cd$crash_lat <- coords[, "Y"]
+  cd <- 
+    cd %>%
+    mutate(
+           date                = make_date(year, month, day = 1L),
+          `Any Injury`         = MAJORINJURIES_BICYCLIST    + MINORINJURIES_BICYCLIST   +
+                                 UNKNOWNINJURIES_BICYCLIST  + FATAL_BICYCLIST           +
+                                 MAJORINJURIES_DRIVER       + MINORINJURIES_DRIVER      +
+                                 UNKNOWNINJURIES_DRIVER     + FATAL_DRIVER              +
+                                 MAJORINJURIES_PEDESTRIAN   + MINORINJURIES_PEDESTRIAN  +
+                                 UNKNOWNINJURIES_PEDESTRIAN + FATAL_PEDESTRIAN,
+          `Vehicle Crashes`    = if_else(TOTAL_VEHICLES     > 0, 1, 0),
+          `Bike Crashes`       = if_else(TOTAL_BICYCLES     > 0, 1, 0),
+          `Pedestrian Crashes` = if_else(TOTAL_PEDESTRIANS  > 0, 1, 0),
+          
+          `Driver Injury`      = MAJORINJURIES_DRIVER       + MINORINJURIES_DRIVER      + UNKNOWNINJURIES_DRIVER,
+          `Bicyclist Injury`   = MAJORINJURIES_BICYCLIST    + MINORINJURIES_BICYCLIST   + UNKNOWNINJURIES_BICYCLIST,
+          `Pedestrian Injury`  = MAJORINJURIES_PEDESTRIAN   + MINORINJURIES_PEDESTRIAN  + UNKNOWNINJURIES_PEDESTRIAN,
+          
+          `Driver Serious Injury`      = MAJORINJURIES_DRIVER,
+          `Bicyclist Serious Injury`   = MAJORINJURIES_BICYCLIST,
+          `Pedestrian Serious Injury`  = MAJORINJURIES_PEDESTRIAN,
+    ) %>%
+    filter(!is.na(date)) %>%
+    select(CRIMEID, year, month, date, crash_lon, crash_lat, ends_with(" Crashes"), ends_with(" Injury")) %>%
   
   return(cd)
 }
-
 
 
 # load labeled PBL data that has the road subblock IDs and the year in which 
