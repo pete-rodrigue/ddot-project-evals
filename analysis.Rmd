@@ -317,17 +317,17 @@ for (proj in unique(cd_in_projs_summed$project_name)) {
 
 ## Using additional data to expand on DDOT project evaluations 
 
-DDOT has looked at a few projects in depth. But we can also use DC's crash data to look at every (or almost every) protected and buffered bike lane in DDOT's "bike lane" shapefile.
+DDOT has looked at a few projects in depth. But we can also use DC's crash data to look at every (or almost every) protected and buffered bike lane in DDOT's "bike lane" shapefile that was built in the late 2010s and early 2020s.
 
-what we'll do:
+Quick methodology:
 
-* get an X meter buffer around every individual road segment
-* count the number of crashes in each buffered segment in each year
-  * if crashes fall into multiple buffers, assign them to a single buffer randomly. this adds noise and will attenuate the "treatment effect"
-* merge on which segments had PBLs & buffered bike lanes installed
+* Took the ["Bicycle Lanes" shape file](https://opendata.dc.gov/datasets/DCGIS::bicycle-lanes/about) from Open Data DC and subset it to just "protected", "dual protected", "buffered", and "dual buffered" bike lanes. We don't really care about painted bike lanes, since those don't have super robust safety benefits.
+* Unioned together all of the subblock segments in that data set by route and build year, since different pieces of some routes were built in different years. I hand-labeled when each piece of the bike lanes were installed by using satellite imagery and google street view (this was a pain). You can find my hand-labeled data set [here](https://felt.com/map/protected-and-buffered-bike-lanes-4U8sjcFHQFif4Pft9CCwicC?loc=38.92185,-76.98843,13.59z).
+* Then I overlay the crash data, and assign any crash that's within 4 meters of the roadway segment's center line to the corridor (DDOT codes the crashes to the center line, rather than wherever the MPD officer poked at the map on this iPad). 
+* Finally, we just plot the number of crashes per month on each route, before and after the protected or buffered bike lane was installed. I'm only showing routes that have at least 8 subblock segments and were installed between 2017 and 2024. I'm also not showing the lanes we just looked at above!
 
-* run regression that compares crash numbers per year, controlling for area, pre-install crashes, road width, bike traffic from Cabi system, etc
-* compare simple before and after means on PBL/BBL & non-PBL/BBL segments
+
+Here's a quick map of the routes. Hover over each route to see the route name, the install year, and whether it's coded as protected (1) or buffered (0) in the Open Data DC data. 
 
 
 ```{r analysis_globals, fig.width=12}
@@ -372,12 +372,32 @@ pbl_unioned <- pbl                                     |>
     n_segments  = n(),
     .groups = "drop" 
   )                                                    |>
-  filter(n_segments >= 10) # >= 6
+  filter(n_segments >= 8) # >= 6
 ```
 
 ```{r}
-plot_leaflet(lines_sf = pbl_unioned)
+plot_leaflet(lines_sf = pbl_unioned, 
+             line_labels = c("ROUTENAME", "build_year", "Has some protected lane segments"))
 ```
+
+
+Note that the categorization of the bike lane types is a little unintuitive. The 17th St NW bike lane, for example, is classified as "buffered" not "protected," which sounds less safe, but the actual bike lane is great:
+
+![The 17th St NW bike lane.](https://www.popville.com/wp-content/uploads/2021/11/17th-street-bike-lanes-popville.jpg)
+
+(Photo by [Martha Wilson for PopVille](https://www.popville.com/2021/11/bike-lanes-dc-17th-street-nw/))
+
+This bike lane was associated with some of the biggest safety improvements (see below). 
+
+But to be consistent, I've separated the data below according to whether the Open Data DC data set calls the bike lane "protected" or "buffered."
+
+The blue shading below shows the "before" period. The red shading shows the "after" period. I ignore peak COVID years (2020-2023) when calculating the before/after change, since those years were atypical.
+
+Couple high-level findings:
+
+* Overall crashes, driver crashes, and people hitting pedestrians all almost universally go down, often by a lot.
+* Bike crashes also often go down, but sometimes they go up. This is likely due to the fact that many more people are biking in those new bike lanes. Even an increase in the raw number of bike crashes in the corridor could mean an actual reduction in the number of crashes _per bike trip_ if way more people are biking on that street because the new bike lane makes it safer. This is almost certainly part of what's happening here.
+* The specifics of the projects obviously matter. The 17th St NW street redesign made that street way safer. Contrast that with [Mt Olivet Rd NE](https://www.google.com/maps/place/Mt+Olivet+Rd+NE,+Washington,+DC+20002/@38.9102078,-76.9848517,3a,75y,145.73h,95.83t/data=!3m7!1e1!3m5!1s6eZtSW7cOrx3J2AgdnMpLA!2e0!6shttps:%2F%2Fstreetviewpixels-pa.googleapis.com%2Fv1%2Fthumbnail%3Fcb_client%3Dmaps_sv.tactile%26w%3D900%26h%3D600%26pitch%3D-5.833926890479461%26panoid%3D6eZtSW7cOrx3J2AgdnMpLA%26yaw%3D145.7320796512975!7i16384!8i8192!4m15!1m8!3m7!1s0x89b7b86d6878234f:0xaa6675298b3da622!2sMt+Olivet+Rd+NE,+Washington,+DC+20002!3b1!8m2!3d38.9102445!4d-76.9850932!16s%2Fg%2F1v2yzrly!3m5!1s0x89b7b86d6878234f:0xaa6675298b3da622!8m2!3d38.9102445!4d-76.9850932!16s%2Fg%2F1v2yzrly?entry=ttu&g_ep=EgoyMDI2MDUyMC4wIKXMDSoASAFQAw%3D%3D), which is still fairly wide (when you include the middle turn lane) and lacking in trees, both of which make drivers go faster.
 
 ```{r}
 
@@ -389,6 +409,8 @@ cd_in_projs_summed <-
   group_corridor_crashes_by_month(df = crashes_near_projects, 
                                   group_by_vars = c("route_unique_id", "min_install", "max_install", "month", "year", "date", "Has some protected lane segments"),
                                   outcome_vars = outcome_vars)
+
+already_shown <- c("21ST ST NW 2022", "9TH ST NW 2023", "G ST NW 2020",  "MINNESOTA AVE SE 2023", "PENNSYLVANIA AVE SE 2023",  "VIRGINIA AVE NW 2022")
 ```
 
 
@@ -404,6 +426,7 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
   if(proj_year < 2017) {next}
   is_pbl = temp_df$`Has some protected lane segments`[1]==1
   if(!is_pbl) {next}
+  if (temp_df$route_unique_id[1] %in% already_shown) {next}
   
   pbl_flag <- ifelse(is_pbl, " (PBL)", "")
   
@@ -460,6 +483,7 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
   if(proj_year < 2017) {next}
   is_pbl = temp_df$`Has some protected lane segments`[1]==1
   if(is_pbl) {next}
+  if (temp_df$route_unique_id[1] %in% already_shown) {next}
   
   pbl_flag <- ifelse(is_pbl, " (PBL)", "")
   

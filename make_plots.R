@@ -17,7 +17,7 @@
 #     stroke=F, color="red", radius = 4)
 
 
-plot_leaflet <- function(points_sf = NULL, polygons_sf = NULL, lines_sf = NULL, bbox = NULL) {
+plot_leaflet <- function(points_sf = NULL, polygons_sf = NULL, lines_sf = NULL, bbox = NULL, line_labels = NULL) {
   
   # Validate that at least one layer is provided
   if (is.null(points_sf) && is.null(polygons_sf) && is.null(lines_sf)) {
@@ -49,17 +49,19 @@ plot_leaflet <- function(points_sf = NULL, polygons_sf = NULL, lines_sf = NULL, 
         data        = polygons_sf,
         fillColor   = "blue",
         fillOpacity = 0.4,
-        stroke      = FALSE
+        stroke      = FALSE,
+        label       = paste(polygons_sf[, 1:3], collapse=" ") 
       )
   }
   
   if (!is.null(lines_sf)) {
     m <- m |>
       addPolylines(
-        data   = lines_sf,
-        color  = "green",
-        weight = 3,
-        opacity = 0.8
+        data    = lines_sf,
+        color   = "green",
+        weight  = 3,
+        opacity = 0.8,
+        label   = apply(st_drop_geometry(lines_sf)[, line_labels], 1, paste, collapse = " ")
       )
   }
   
