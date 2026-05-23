@@ -528,8 +528,14 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
 
 
 
+<br><br>
 
 
+## Comparing streets with these new projects against other DC streets
+
+This is all fine and good. But maybe the decline in crashes was not particular to these corridors, and in fact happened across DC during this time? Maybe it's all the new speed cameras, or the fact DC is towing chronic speeders?
+
+To try and answer that question, let's compare these streets with new bike lane projects to other streets in DC, and see if they have similar or different crash trends.
 
 
 
