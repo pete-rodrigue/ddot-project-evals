@@ -19,9 +19,13 @@ To view the code in this document, click the "show" buttons on the right. Some o
 
 
 ```{r setup, message=F, warning=F}
-knitr::opts_chunk$set(echo = TRUE, fig.width = 8, message=F, warning=F)
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, 
+                      message=F, warning=F,
+                      root.dir = "C:/Users/edwar/Documents/GitHub/ddot-project-evals")
 
-setwd("~/GitHub/ddot-project-evals")
+setwd("C:/Users/edwar/Documents/GitHub/ddot-project-evals")
+source("load_data.R")
+source("make_plots.R")
 
 # Libraries we need:
 library(readr)
@@ -38,7 +42,7 @@ library(plotly)
 library(zoo)
 ```
 
-```{r}
+```{r load_ddot_eval_data}
 # google sheet w/ the data:
 url <- "https://docs.google.com/spreadsheets/d/e/2PACX-1vQtDsTt9VVyn-wptsMT6vxtCM2J1dPYWji90OOWj1v4c4pPz6Kwa6mQtOk096EU3npvJ9g4fcjnwLpp/pub?gid=1445637369&single=true&output=csv"
 
@@ -66,7 +70,7 @@ First let's look at some of the results from DDOT's detailed before-after analys
 
 <br>
 
-```{r}
+```{r plot_ddot_eval_data}
 to_plot <-
   df %>%
   filter(Outcome %in% c("Any Injury", "All Crashes")) %>%
@@ -123,14 +127,13 @@ rm(to_plot); rm(url)
 ```
 
 
-```{r}
+```{r }
 outcome_vars <-
   c("All Crashes", "Vehicle Crashes", "Bike Crashes", "Pedestrian Crashes", 
     "Any Injury", "Driver Injury", "Bicyclist Injury", "Pedestrian Injury",
     "Driver Serious Injury", "Bicyclist Serious Injury", "Pedestrian Serious Injury")
 
-# load data:
-source("load_data.R")
+
 # load crash data:
 cd <- load_crash_data()
 # crash_details <- read_csv("data/Crash_Details_Table.csv", show_col_types = F)
@@ -312,6 +315,8 @@ for (proj in unique(cd_in_projs_summed$project_name)) {
 
 <br><br>
 
+## Using additional data to expand on DDOT project evaluations 
+
 DDOT has looked at a few projects in depth. But we can also use DC's crash data to look at every (or almost every) protected and buffered bike lane in DDOT's "bike lane" shapefile.
 
 what we'll do:
@@ -339,7 +344,7 @@ ANALYSIS_LEVEL = "SUBBLOCKKEY"
 # always_taker : units that got PBLs before 2019
 TREATMENT_GROUPS_TO_INCLUDE = c("switcher", "never_taker")
 # whether to include buffered bike lanes as well or just fully protected bike lanes
-PBLS_ONLY = TRUE
+PBLS_ONLY = FALSE
 # a bbox for map plotting so we don't plot tons of data at once:
 PLOT_BBOX = c(xmin = -77.015, ymin = 38.94, xmax = -77.010, ymax = 38.944)
 
@@ -349,23 +354,32 @@ pbl               <- load_pbl_data(PBLS_ONLY)
 cabi_sf           <- load_cabi_data()[[1]]
 annual_cabi_rides <- load_cabi_data()[[2]]
 rs                <- load_subblocks()
-```
 
-```{r}
-plot_leaflet(lines_sf = pbl)
-```
-
-```{r}
 pbl_unioned <- pbl                                     |>
+  mutate(
+    ROUTENAME = if_else(ROUTENAME == "Ramp-36001642", "IRVING ST NW", ROUTENAME),
+    ROUTENAME = if_else(ROUTENAME == "KENYON ST NW" , "IRVING ST NW", ROUTENAME),
+    ROUTENAME = if_else(ROUTENAME == "IRVING ST NE" , "IRVING ST NW", ROUTENAME),
+    ROUTENAME = if_else(ROUTENAME == "PARK PL NW"   , "5TH ST NW"   , ROUTENAME),
+    )                                                  |>
   group_by(ROUTENAME, build_year)                      |>
   summarise(
     min_install = min(build_year, na.rm = TRUE),
     max_install = max(build_year, na.rm = TRUE),
+    `Has some protected lane segments` = if_else(
+      max(!is.na(BIKELANE_PROTECTED) + !is.na(BIKELANE_DUAL_PROTECTED)) == 1,
+          1, 0),
     n_segments  = n(),
     .groups = "drop" 
   )                                                    |>
-  filter(n_segments > 2)
+  filter(n_segments >= 10) # >= 6
+```
 
+```{r}
+plot_leaflet(lines_sf = pbl_unioned)
+```
+
+```{r}
 
 crashes_near_projects <- get_crashes_in_corridors(line_sf = pbl_unioned, crashes_sf = cd, buffer_in_meters = 4)
 crashes_near_projects$route_unique_id <- paste(crashes_near_projects$ROUTENAME, crashes_near_projects$max_install)
@@ -373,41 +387,111 @@ crashes_near_projects$route_unique_id <- paste(crashes_near_projects$ROUTENAME, 
 
 cd_in_projs_summed <- 
   group_corridor_crashes_by_month(df = crashes_near_projects, 
-                                  group_by_vars = c("route_unique_id", "month", "year", "date"),
+                                  group_by_vars = c("route_unique_id", "min_install", "max_install", "month", "year", "date", "Has some protected lane segments"),
                                   outcome_vars = outcome_vars)
 ```
 
 
 
-## Replicating DDOT project evaluations {.tabset}
+## {.tabset}
 
 ```{r results="asis"}
-for (proj in unique(cd_in_projs_summed$project_name)) {  
+for (proj in unique(cd_in_projs_summed$route_unique_id)) {  
   
-  if(proj=="15th St NW/SW Protected Bike Lane") {next}
+  temp_df <- filter(cd_in_projs_summed, year >= 2016 & route_unique_id == proj)
   
-  cat("\n### ", proj, "\n") # tab headers
+  proj_year <- unique(temp_df$min_install)
+  if(proj_year < 2017) {next}
+  is_pbl = temp_df$`Has some protected lane segments`[1]==1
+  if(!is_pbl) {next}
   
-  periods <- proj_dates[[proj]]
-  p1      <- periods$period_1
-  p2      <- periods$period_2
+  pbl_flag <- ifelse(is_pbl, " (PBL)", "")
+  
+  cat("\n### ", proj, pbl_flag, "\n") # tab headers
+  
+  if (proj_year < 2020) {
+    p1sy = 2016; p1ey = proj_year - 1; p2sy = 2024; p2ey = 2025
+  } else if (proj_year == 2024) {
+    p1sy = 2017; p1ey = 2019; p2sy = 2025; p2ey = 2025
+  } else {
+    p1sy = 2017; p1ey = 2019; p2sy = 2024; p2ey = 2025
+  }
+    
+  p1      <- list(label = "Pre" ,  start = paste0(2017, "-01-01"), end = paste0(2019, "-12-31"))
+  p2      <- list(label = "Post",  start = paste0(2024, "-01-01"), end = paste0(2025, "-12-31"))
   
   rvs <- plot_crashes_over_time(
-    data             = filter(cd_in_projs_summed, year >= 2016 &
-                              project_name == proj),      
+    data             = temp_df,      
     smoothing_factor = 4,
     period_1         = p1,
     period_2         = p2,
-    title            = proj
+    title            = paste(proj, pbl_flag)
   )
   
   print(rvs[[1]])
   cat("\n")
   print(
     rvs[[3]] %>% 
-      dplyr::left_join(select(df, `Project name`, Outcome, Change) %>% filter(`Project name` == proj), by=c("series"="Outcome")) %>%
-      rename(pct_change_ddot = Change) %>%
-      select(-`Project name`) %>%
+      rename(Outcome = series,
+             `Before, per month` = Pre_per_month,
+             `After, per month`  = Post_per_month,
+             `% change`          = pct_change) %>%
+      knitr::kable()
+    )
+  
+  cat("\n\n")
+}
+```
+
+
+## {-}
+
+
+
+
+## {.tabset}
+
+```{r results="asis"}
+for (proj in unique(cd_in_projs_summed$route_unique_id)) {  
+  
+  temp_df <- filter(cd_in_projs_summed, year >= 2016 & route_unique_id == proj)
+  
+  proj_year <- unique(temp_df$min_install)
+  if(proj_year < 2017) {next}
+  is_pbl = temp_df$`Has some protected lane segments`[1]==1
+  if(is_pbl) {next}
+  
+  pbl_flag <- ifelse(is_pbl, " (PBL)", "")
+  
+  cat("\n### ", proj, pbl_flag, "\n") # tab headers
+  
+  if (proj_year < 2020) {
+    p1sy = 2016; p1ey = proj_year - 1; p2sy = 2024; p2ey = 2025
+  } else if (proj_year == 2024) {
+    p1sy = 2017; p1ey = 2019; p2sy = 2025; p2ey = 2025
+  } else {
+    p1sy = 2017; p1ey = 2019; p2sy = 2024; p2ey = 2025
+  }
+    
+  p1      <- list(label = "Pre" ,  start = paste0(2017, "-01-01"), end = paste0(2019, "-12-31"))
+  p2      <- list(label = "Post",  start = paste0(2024, "-01-01"), end = paste0(2025, "-12-31"))
+  
+  rvs <- plot_crashes_over_time(
+    data             = temp_df,      
+    smoothing_factor = 4,
+    period_1         = p1,
+    period_2         = p2,
+    title            = paste(proj, pbl_flag)
+  )
+  
+  print(rvs[[1]])
+  cat("\n")
+  print(
+    rvs[[3]] %>% 
+      rename(Outcome = series,
+             `Before, per month` = Pre_per_month,
+             `After, per month`  = Post_per_month,
+             `% change`          = pct_change) %>%
       knitr::kable()
     )
   
@@ -432,12 +516,7 @@ for (proj in unique(cd_in_projs_summed$project_name)) {
 
 
 
-
-
-
-
-
-```{r}
+```{r, eval=F}
 # source the R script in which we load all of the data:
 source("prepare_timeseries.R")
 

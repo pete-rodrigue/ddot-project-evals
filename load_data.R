@@ -72,6 +72,7 @@ load_pbl_data <- function(PBLS_ONLY) {
     pbl <- filter(pbl, (!is.na(BIKELANE_PROTECTED)) | (!is.na(BIKELANE_DUAL_PROTECTED)))
   }
   
+  pbl
 }
 
 
