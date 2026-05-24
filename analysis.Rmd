@@ -418,6 +418,7 @@ already_shown <- c("21ST ST NW 2022", "9TH ST NW 2023", "G ST NW 2020",  "MINNES
 ## {.tabset}
 
 ```{r results="asis"}
+pbl_summary <- data.frame("Project" = NA, "Outcome" = NA, "PBL" = NA, "% change" = NA)
 for (proj in unique(cd_in_projs_summed$route_unique_id)) {  
   
   temp_df <- filter(cd_in_projs_summed, year >= 2016 & route_unique_id == proj)
@@ -451,19 +452,29 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
     title            = paste(proj, pbl_flag)
   )
   
-  print(rvs[[1]])
-  cat("\n")
-  print(
+  plot_table <- 
     rvs[[3]] %>% 
       rename(Outcome = series,
              `Before, per month` = Pre_per_month,
              `After, per month`  = Post_per_month,
-             `% change`          = pct_change) %>%
-      knitr::kable()
-    )
+             `% change`          = pct_change)
   
+  print(rvs[[1]])
+  cat("\n")
+  print(plot_table %>% knitr::kable())
+  
+  pbl_summary <- bind_rows(
+    pbl_summary, 
+    data.frame("Project" = rep(proj, 2), 
+               "Outcome" = c("All Crashes", "Any Injury"), 
+               "PBL" = T, 
+               "% change" = c(plot_table$`% change`[plot_table$Outcome == "All Crashes"],
+                              plot_table$`% change`[plot_table$Outcome == "Any Injury"])
+               )
+  )
   cat("\n\n")
 }
+pbl_summary <- pbl_summary[!is.na(pbl_summary$Outcome),]
 ```
 
 
@@ -475,6 +486,7 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
 ## {.tabset}
 
 ```{r results="asis"}
+buffered_summary <- data.frame("Project" = NA, "Outcome" = NA, "PBL" = NA, "% change" = NA)
 for (proj in unique(cd_in_projs_summed$route_unique_id)) {  
   
   temp_df <- filter(cd_in_projs_summed, year >= 2016 & route_unique_id == proj)
@@ -508,25 +520,67 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
     title            = paste(proj, pbl_flag)
   )
   
-  print(rvs[[1]])
-  cat("\n")
-  print(
+  plot_table <- 
     rvs[[3]] %>% 
       rename(Outcome = series,
              `Before, per month` = Pre_per_month,
              `After, per month`  = Post_per_month,
-             `% change`          = pct_change) %>%
-      knitr::kable()
-    )
+             `% change`          = pct_change)
   
+  print(rvs[[1]])
+  cat("\n")
+  print(plot_table %>% knitr::kable())
+  
+  buffered_summary <- bind_rows(
+    buffered_summary, 
+    data.frame("Project" = rep(proj, 2), 
+               "Outcome" = c("All Crashes", "Any Injury"), 
+               "PBL" = F, 
+               "% change" = c(plot_table$`% change`[plot_table$Outcome == "All Crashes"],
+                              plot_table$`% change`[plot_table$Outcome == "Any Injury"])
+               )
+  )
   cat("\n\n")
 }
+buffered_summary <- buffered_summary[!is.na(buffered_summary$Outcome),]
 ```
 
 ## {-}
 
 
+```{r, fig.height=8, fig.width=10}
+#TODO: add a single summary chart that plots pre and post crashes across all projects over time, to get an overall mean
+all_summaries <- unique(bind_rows(pbl_summary, buffered_summary))
 
+all_summaries |>
+  mutate(PBL = if_else(PBL, "PBL Project", "Non-PBL Project")) |>
+  ggplot(aes(x = X..change, y = Project, color = Outcome)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5) +
+  geom_point(size = 3) +
+  geom_vline(
+    data = all_summaries |>
+      mutate(PBL = if_else(PBL, "PBL Project", "Non-PBL Project")) |>
+      group_by(PBL, Outcome) |>
+      summarise(mean_change = mean(X..change, na.rm = TRUE), .groups = "drop"),
+    aes(xintercept = mean_change, color = Outcome),
+    linetype = "solid",
+    linewidth = 0.8, 
+    alpha=.5
+  ) +
+  facet_wrap(~ PBL, ncol = 1, scales = "free_y",
+             labeller = labeller(PBL = c("PBL Project" = "PBL Project", 
+                                         "Non-PBL Project" = "Non-PBL Project"))) +
+  scale_x_continuous(labels = scales::label_percent(scale = 1)) +
+  labs(x = "% Change", y = NULL, color = "Outcome") +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor   = element_blank(),
+    strip.text         = element_text(face = "bold"),
+    legend.position    = "bottom"
+  ) +
+  ggtitle("With a few exceptions, these projects lead to massive declines in crashes")
+```
 
 <br><br>
 
