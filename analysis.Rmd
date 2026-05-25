@@ -66,39 +66,28 @@ df <-
 
 ## DDOT's bus and bike project evaluations
 
-First let's look at some of the results from DDOT's detailed before-after analyses of their projects:
+First let's look at some of the results from DDOT's detailed before-after analyses of their projects. These all find huge reductions in crashes after project installation. The dashed lines below show the average drop in crashes by type. These projects led to either decreased driver travel times or extremely similar driving times.
 
 <br>
 
 ```{r plot_ddot_eval_data}
-to_plot <-
+# to_plot <-
   df %>%
-  filter(Outcome %in% c("Any Injury", "All Crashes")) %>%
-  mutate(Change = Change*-1)
-
-ggplot(to_plot) +
+  filter(Outcome %in% c("Any Injury", "All Crashes", "Pedestrian Injury")) %>%
+  mutate(Change = Change*-1) %>%
+  ggplot() +
   geom_bar(aes(x=`Project short name`, y=Change, fill=Outcome), stat="identity", position="dodge") +
   labs(y="% decrease in crashes", x="") +
   ggtitle("All projects saw decreases in crashes") +
   geom_hline(aes(yintercept=mean(Change[Outcome == "All Crashes"], na.rm=T)), 
              color="#F8766D", linetype="dashed", linewidth=.8, alpha=.5) +
   geom_hline(aes(yintercept=mean(Change[Outcome == "Any Injury"], na.rm=T)), 
-             color="#00BFC4", linetype="dashed", linewidth=.8, alpha=.5) +
+             color="#00BA38", linetype="dashed", linewidth=.8, alpha=.5) +
+  geom_hline(aes(yintercept=mean(Change[Outcome == "Pedestrian Injury"], na.rm=T)), 
+             color="#619CFF", linetype="dashed", linewidth=.8, alpha=.5) +
   theme_minimal() +
   theme(legend.title = element_blank())
 
-to_plot <-
-  df %>%
-  filter(Outcome %in% c("Pedestrian Injury")) %>%
-  mutate(Change = Change*-1)
-
-ggplot(to_plot) +
-  geom_bar(aes(x=`Project short name`, y=Change), stat="identity", fill="seagreen") +
-  labs(y="% decrease in crashes", x="") +
-  ggtitle("Pedestrian crashes fell after project completion, sometimes to zero") +
-  geom_hline(aes(yintercept=mean(Change, na.rm=T)), color="grey", linetype="dashed", size=1) +
-  theme_minimal() +
-  theme(legend.title = element_blank())
 
 to_plot <-
   df %>%
@@ -127,7 +116,7 @@ rm(to_plot); rm(url)
 ```
 
 
-```{r }
+```{r}
 outcome_vars <-
   c("All Crashes", "Vehicle Crashes", "Bike Crashes", "Pedestrian Crashes", 
     "Any Injury", "Driver Injury", "Bicyclist Injury", "Pedestrian Injury",
@@ -231,24 +220,26 @@ Below is a quick look at all of the crashes in these project corridors. Note tha
 plot_leaflet(
   lines_sf = ddot_projs, 
   # polygons_sf = ddot_projs_buf, 
+  line_labels = c("felt.feature", "project_name"),
   points_sf = crashes_near_projects
   )
 ```
 
 <br><br>
 
-## Replicating DDOT project evaluations {.tabset}
+## Replicating DDOT project evaluations
 
-Below, we try to replicate those results. The line charts are smoothed, showing a 4 month moving average. The data actually agrees pretty well! This is good, given I only had DDOT's PDF that briefly describes their methodology, not their actual code or a detailed how-to. This suggests the results are relatively robust to little choices about how to do the analysis.
+Below, we try to replicate those results. The data actually agrees pretty well! This is good, given I only had DDOT's PDF that briefly describes their methodology, not their actual code or a detailed how-to. This suggests the results are relatively robust to little choices about how to do the analysis.
 
 Crashes go down, sometimes by quite a lot, after these projects get installed. 
 
-```{r results="asis"}
+```{r}
+eval_summary <- data.frame("Project" = NA, "Source" = NA, "Outcome" = NA, "% change" = NA)
+eval_objs    <- list()
 for (proj in unique(cd_in_projs_summed$project_name)) {  
   
-  if(proj=="15th St NW/SW Protected Bike Lane") {next}
+  if(proj %in% c("15th St NW/SW Protected Bike Lane", "21st Street NW Protected Bike Lane")) {next}
   
-  cat("\n### ", proj, "\n") # tab headers
   
   periods <- proj_dates[[proj]]
   p1      <- periods$period_1
@@ -263,24 +254,64 @@ for (proj in unique(cd_in_projs_summed$project_name)) {
     title            = proj
   )
   
-  print(rvs[[1]])
-  cat("\n")
-  print(
+  plot_table <-
     rvs[[3]] %>% 
       dplyr::left_join(select(df, `Project name`, Outcome, Change) %>% filter(`Project name` == proj), by=c("series"="Outcome")) %>%
       rename(pct_change_ddot = Change) %>%
-      select(-`Project name`) %>%
-      knitr::kable()
-    )
+      select(-`Project name`) 
   
-  cat("\n\n")
+  eval_objs <- c(eval_objs, list(list(proj, rvs[[1]], plot_table)))
+  
+  eval_summary <- bind_rows(
+    eval_summary, 
+    data.frame("Project" = rep(proj, 4), 
+               "Source"  = c("This analysis", "This analysis", "DDOT", "DDOT"),
+               "Outcome" = rep(c("All Crashes", "Any Injury"), 2), 
+               "% change" = c(plot_table$pct_change[plot_table$series == "All Crashes"],
+                              plot_table$pct_change[plot_table$series == "Any Injury"],
+                              plot_table$pct_change_ddot[plot_table$series == "All Crashes"],
+                              plot_table$pct_change_ddot[plot_table$series == "Any Injury"])
+               )
+  )
+  
 }
+eval_summary <- eval_summary[!is.na(eval_summary$Outcome),]
 ```
 
-## {-}
+```{r fig.width=10}
+eval_summary |>
+  ggplot(aes(x = X..change, y = Project, color=Source)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5) +
+  geom_point(size = 4.5, alpha=.6) +
+  facet_wrap(~ Outcome, ncol = 1, scales = "free_y") +
+  scale_x_continuous(labels = scales::label_percent(scale = 1)) +
+  labs(x = "% Change", y = NULL, color = "Outcome") +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor   = element_blank(),
+    strip.text         = element_text(face = "bold"),
+    legend.position    = "bottom",
+    legend.title       = element_blank()
+  ) +
+  ggtitle("We're more or less able to replicate DDOT's results")
+```
+
+You can view detailed tables and time series by clicking the little arrows below. The line charts are smoothed, showing a 4 month moving average. 
 
 
-
+```{r, results="asis"}
+for (myl in eval_objs) {
+  cat("\n<details>\n<summary>", myl[[1]], "</summary>\n\n")
+  print(myl[[2]])
+  cat("\n")
+  print(myl[[3]] %>% 
+          rename(Outcome = series, `% change` = pct_change, `DDOT % change` = pct_change_ddot, 
+                 `Pre (per month)` = Pre_per_month, `Post (per month)` = Post_per_month) %>% knitr::kable())
+  cat("\n</details>\n")
+}
+```
+<br><br>
 
 
 
@@ -319,13 +350,20 @@ for (proj in unique(cd_in_projs_summed$project_name)) {
 
 DDOT has looked at a few projects in depth. But we can also use DC's crash data to look at every (or almost every) protected and buffered bike lane in DDOT's "bike lane" shapefile that was built in the late 2010s and early 2020s.
 
+<details><summary>Click here to read a little more about my methodology</summary>
+
 Quick methodology:
 
 * Took the ["Bicycle Lanes" shape file](https://opendata.dc.gov/datasets/DCGIS::bicycle-lanes/about) from Open Data DC and subset it to just "protected", "dual protected", "buffered", and "dual buffered" bike lanes. We don't really care about painted bike lanes, since those don't have super robust safety benefits.
 * Unioned together all of the subblock segments in that data set by route and build year, since different pieces of some routes were built in different years. I hand-labeled when each piece of the bike lanes were installed by using satellite imagery and google street view (this was a pain). You can find my hand-labeled data set [here](https://felt.com/map/protected-and-buffered-bike-lanes-4U8sjcFHQFif4Pft9CCwicC?loc=38.92185,-76.98843,13.59z).
-* Then I overlay the crash data, and assign any crash that's within 4 meters of the roadway segment's center line to the corridor (DDOT codes the crashes to the center line, rather than wherever the MPD officer poked at the map on this iPad). 
+* Overlaid the crash data, and assigned any crash that's within 4 meters of the roadway segment's center line to the corridor (DDOT codes the crashes to the center line, rather than wherever the MPD officer poked at the map on their iPad). 
 * Finally, we just plot the number of crashes per month on each route, before and after the protected or buffered bike lane was installed. I'm only showing routes that have at least 8 subblock segments and were installed between 2017 and 2024. I'm also not showing the lanes we just looked at above!
+* I'm using 2017 to 2019 as the "pre" years, unless the bike lane was installed in 2017, 18, or 19. In that case, I use 2016 up to the installation year as the "pre" years.
+* I'm using 2024 and 2025 as the "post" years, unless the bike lane was installed in 2024. In that case, I use 2025 as the "post" year. 
 
+The blue shading in the time series below shows the "before" period. The red shading shows the "after" period. I ignore peak COVID years (2020-2023) when calculating the before/after change, since those years were atypical.
+
+</details>
 
 Here's a quick map of the routes. Hover over each route to see the route name, the install year, and whether it's coded as protected (1) or buffered (0) in the Open Data DC data. 
 
@@ -346,7 +384,7 @@ TREATMENT_GROUPS_TO_INCLUDE = c("switcher", "never_taker")
 # whether to include buffered bike lanes as well or just fully protected bike lanes
 PBLS_ONLY = FALSE
 # a bbox for map plotting so we don't plot tons of data at once:
-PLOT_BBOX = c(xmin = -77.015, ymin = 38.94, xmax = -77.010, ymax = 38.944)
+PLOT_BBOX = c(xmin = -77.020, ymin = 38.94, xmax = -77.010, ymax = 38.944)
 
 # load data:
 cd                <- load_crash_data()
@@ -391,18 +429,17 @@ This bike lane was associated with some of the biggest safety improvements (see 
 
 But to be consistent, I've separated the data below according to whether the Open Data DC data set calls the bike lane "protected" or "buffered."
 
-The blue shading below shows the "before" period. The red shading shows the "after" period. I ignore peak COVID years (2020-2023) when calculating the before/after change, since those years were atypical.
 
-Couple high-level findings:
+High-level findings:
 
 * Overall crashes, driver crashes, and people hitting pedestrians all almost universally go down, often by a lot.
-* Bike crashes also often go down, but sometimes they go up. This is likely due to the fact that many more people are biking in those new bike lanes. Even an increase in the raw number of bike crashes in the corridor could mean an actual reduction in the number of crashes _per bike trip_ if way more people are biking on that street because the new bike lane makes it safer. This is almost certainly part of what's happening here.
+* Bike crashes also often go down, but sometimes they go up. This is likely due to the fact that many more people are biking in those new bike lanes. Even an increase in the raw number of bike crashes in the corridor could mean an actual reduction in the number of crashes _per bike trip_ if way more people are biking on that street because the new bike lane makes it safer.
 * The specifics of the projects obviously matter. The 17th St NW street redesign made that street way safer. Contrast that with [Mt Olivet Rd NE](https://www.google.com/maps/place/Mt+Olivet+Rd+NE,+Washington,+DC+20002/@38.9102078,-76.9848517,3a,75y,145.73h,95.83t/data=!3m7!1e1!3m5!1s6eZtSW7cOrx3J2AgdnMpLA!2e0!6shttps:%2F%2Fstreetviewpixels-pa.googleapis.com%2Fv1%2Fthumbnail%3Fcb_client%3Dmaps_sv.tactile%26w%3D900%26h%3D600%26pitch%3D-5.833926890479461%26panoid%3D6eZtSW7cOrx3J2AgdnMpLA%26yaw%3D145.7320796512975!7i16384!8i8192!4m15!1m8!3m7!1s0x89b7b86d6878234f:0xaa6675298b3da622!2sMt+Olivet+Rd+NE,+Washington,+DC+20002!3b1!8m2!3d38.9102445!4d-76.9850932!16s%2Fg%2F1v2yzrly!3m5!1s0x89b7b86d6878234f:0xaa6675298b3da622!8m2!3d38.9102445!4d-76.9850932!16s%2Fg%2F1v2yzrly?entry=ttu&g_ep=EgoyMDI2MDUyMC4wIKXMDSoASAFQAw%3D%3D), which is still fairly wide (when you include the middle turn lane) and lacking in trees, both of which make drivers go faster.
 
 ```{r}
 
 crashes_near_projects <- get_crashes_in_corridors(line_sf = pbl_unioned, crashes_sf = cd, buffer_in_meters = 4)
-crashes_near_projects$route_unique_id <- paste(crashes_near_projects$ROUTENAME, crashes_near_projects$max_install)
+crashes_near_projects$route_unique_id <- paste0(crashes_near_projects$ROUTENAME, " (", crashes_near_projects$max_install, ")")
 
 
 cd_in_projs_summed <- 
@@ -410,15 +447,16 @@ cd_in_projs_summed <-
                                   group_by_vars = c("route_unique_id", "min_install", "max_install", "month", "year", "date", "Has some protected lane segments"),
                                   outcome_vars = outcome_vars)
 
-already_shown <- c("21ST ST NW 2022", "9TH ST NW 2023", "G ST NW 2020",  "MINNESOTA AVE SE 2023", "PENNSYLVANIA AVE SE 2023",  "VIRGINIA AVE NW 2022")
+already_shown <- c("21ST ST NW (2022)", "9TH ST NW (2023)", "G ST NW (2020)",  "MINNESOTA AVE SE (2023)", "PENNSYLVANIA AVE SE (2023)",  "VIRGINIA AVE NW (2022)")
 ```
 
 
 
-## {.tabset}
 
-```{r results="asis"}
+
+```{r}
 pbl_summary <- data.frame("Project" = NA, "Outcome" = NA, "PBL" = NA, "% change" = NA)
+pbl_objs    <- list()
 for (proj in unique(cd_in_projs_summed$route_unique_id)) {  
   
   temp_df <- filter(cd_in_projs_summed, year >= 2016 & route_unique_id == proj)
@@ -429,9 +467,8 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
   if(!is_pbl) {next}
   if (temp_df$route_unique_id[1] %in% already_shown) {next}
   
-  pbl_flag <- ifelse(is_pbl, " (PBL)", "")
+  pbl_flag <- ifelse(is_pbl, " [PBL]", "[BBL]")
   
-  cat("\n### ", proj, pbl_flag, "\n") # tab headers
   
   if (proj_year < 2020) {
     p1sy = 2016; p1ey = proj_year - 1; p2sy = 2024; p2ey = 2025
@@ -441,8 +478,8 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
     p1sy = 2017; p1ey = 2019; p2sy = 2024; p2ey = 2025
   }
     
-  p1      <- list(label = "Pre" ,  start = paste0(2017, "-01-01"), end = paste0(2019, "-12-31"))
-  p2      <- list(label = "Post",  start = paste0(2024, "-01-01"), end = paste0(2025, "-12-31"))
+  p1      <- list(label = "Pre" ,  start = paste0(p1sy, "-01-01"), end = paste0(p1ey, "-12-31"))
+  p2      <- list(label = "Post",  start = paste0(p2sy, "-01-01"), end = paste0(p2ey, "-12-31"))
   
   rvs <- plot_crashes_over_time(
     data             = temp_df,      
@@ -459,9 +496,7 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
              `After, per month`  = Post_per_month,
              `% change`          = pct_change)
   
-  print(rvs[[1]])
-  cat("\n")
-  print(plot_table %>% knitr::kable())
+  pbl_objs <- c(pbl_objs, list(list(proj, is_pbl, rvs[[1]], plot_table)))
   
   pbl_summary <- bind_rows(
     pbl_summary, 
@@ -472,21 +507,15 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
                               plot_table$`% change`[plot_table$Outcome == "Any Injury"])
                )
   )
-  cat("\n\n")
 }
 pbl_summary <- pbl_summary[!is.na(pbl_summary$Outcome),]
 ```
 
 
-## {-}
 
-
-
-
-## {.tabset}
-
-```{r results="asis"}
+```{r}
 buffered_summary <- data.frame("Project" = NA, "Outcome" = NA, "PBL" = NA, "% change" = NA)
+buffered_objs    <- list()
 for (proj in unique(cd_in_projs_summed$route_unique_id)) {  
   
   temp_df <- filter(cd_in_projs_summed, year >= 2016 & route_unique_id == proj)
@@ -497,9 +526,7 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
   if(is_pbl) {next}
   if (temp_df$route_unique_id[1] %in% already_shown) {next}
   
-  pbl_flag <- ifelse(is_pbl, " (PBL)", "")
-  
-  cat("\n### ", proj, pbl_flag, "\n") # tab headers
+  pbl_flag <- ifelse(is_pbl, " [PBL]", " [BBL]")
   
   if (proj_year < 2020) {
     p1sy = 2016; p1ey = proj_year - 1; p2sy = 2024; p2ey = 2025
@@ -509,8 +536,8 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
     p1sy = 2017; p1ey = 2019; p2sy = 2024; p2ey = 2025
   }
     
-  p1      <- list(label = "Pre" ,  start = paste0(2017, "-01-01"), end = paste0(2019, "-12-31"))
-  p2      <- list(label = "Post",  start = paste0(2024, "-01-01"), end = paste0(2025, "-12-31"))
+  p1      <- list(label = "Pre" ,  start = paste0(p1sy, "-01-01"), end = paste0(p1ey, "-12-31"))
+  p2      <- list(label = "Post",  start = paste0(p2sy, "-01-01"), end = paste0(p2ey, "-12-31"))
   
   rvs <- plot_crashes_over_time(
     data             = temp_df,      
@@ -527,9 +554,7 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
              `After, per month`  = Post_per_month,
              `% change`          = pct_change)
   
-  print(rvs[[1]])
-  cat("\n")
-  print(plot_table %>% knitr::kable())
+  buffered_objs <- c(buffered_objs, list(list(proj, is_pbl, rvs[[1]], plot_table)))
   
   buffered_summary <- bind_rows(
     buffered_summary, 
@@ -540,16 +565,12 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
                               plot_table$`% change`[plot_table$Outcome == "Any Injury"])
                )
   )
-  cat("\n\n")
 }
 buffered_summary <- buffered_summary[!is.na(buffered_summary$Outcome),]
 ```
 
-## {-}
-
 
 ```{r, fig.height=8, fig.width=10}
-#TODO: add a single summary chart that plots pre and post crashes across all projects over time, to get an overall mean
 all_summaries <- unique(bind_rows(pbl_summary, buffered_summary))
 
 all_summaries |>
@@ -582,7 +603,61 @@ all_summaries |>
   ggtitle("With a few exceptions, these projects lead to massive declines in crashes")
 ```
 
+<br>
+
+You can view detailed tables and time series by clicking the little arrows below. The line charts are smoothed, showing a 4 month moving average. 
+
+<br>
+
+Protected bike lanes:
+
+```{r, results="asis"}
+for (myl in pbl_objs) {
+  cat("\n<details>\n<summary>", myl[[1]], "</summary>\n\n")
+  print(myl[[3]])
+  cat("\n")
+  print(myl[[4]] %>% knitr::kable())
+  cat("\n</details>\n")
+}
+```
+
+<br>
+
+Buffered bike lanes:
+
+
+```{r, results="asis"}
+for (myl in buffered_objs) {
+  cat("\n<details>\n<summary>", myl[[1]], "</summary>\n\n")
+  print(myl[[3]])
+  cat("\n")
+  print(myl[[4]] %>% knitr::kable())
+  cat("\n</details>\n")
+}
+```
+
 <br><br>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 ## Comparing streets with these new projects against other DC streets
@@ -594,334 +669,251 @@ To try and answer that question, let's compare these streets with new bike lane 
 
 
 
-
-
-
-
-
-
-```{r, eval=F}
-# source the R script in which we load all of the data:
-source("prepare_timeseries.R")
-
-plot_vars <- c(
-  "crashes_per_acre",
-  
-  "injury_crashes_per_acre",
-  "driver_injury_crashes_per_acre",
-  # "serious_driver_injury_crashes_per_acre",
-  
-  "bike_injury_crashes_per_acre",
-  # "serious_bike_injury_crashes_per_acre",
-  
-  "ped_injury_crashes_per_acre"
-  # "serious_ped_injury_crashes_per_acre"
-)
-
-group_types <- c("switcher", "never_taker", "late_taker", "always_taker")
-
-# Nicer labels for facet strip text
-var_labels <- c(
-  "crashes_per_acre"                      = "All Crashes",
-  "injury_crashes_per_acre"               = "Injury Crashes",
-  "driver_injury_crashes_per_acre"        = "Driver Injury Crashes",
-  # "serious_driver_injury_crashes_per_acre"= "Serious Driver Injury Crashes",
-  "bike_injury_crashes_per_acre"          = "Bike Injury Crashes",
-  # "serious_bike_injury_crashes_per_acre"  = "Serious Bike Injury Crashes",
-  "ped_injury_crashes_per_acre"           = "Ped Injury Crashes"
-  # "serious_ped_injury_crashes_per_acre"   = "Serious Ped Injury Crashes"
-)
-
-group_labels <- c(
-  "switcher"     = "Switchers (PBL installed 2020–2023)",
-  "never_taker"  = "Never Takers (no PBL)",
-  "late_taker"   = "Late Takers (PBL installed 2024–2025)",
-  "always_taker" = "Always Takers (PBL installed before 2019)"
-)
-
-
-# clean the data:
-res <- prepare_timeseries()
-cd_pbl_clean_simplified <- res[[1]]
-
-# descriptive histograms
-
-# density_plots        <- map(set_names(group_types), \(g) make_density_plots(cd_pbl_clean_simplified, g))
-# density_plots_log    <- map(set_names(group_types), \(g) make_density_plots(cd_pbl_clean_simplified, g, log_transform = TRUE))
-# 
-# walk(density_plots_log, print)
-```
-
-
-
-
-```{r, fig.width=12, eval=F}
-ecdf_plots <- map(set_names(group_types), \(g) make_ecdf_plots(cd_pbl_clean_simplified, g))
-walk(ecdf_plots, print)
-```
-
-```{r, eval=F}
-# Usage:
-summarise_outcomes_by_period(cd_pbl_clean_simplified)
-
-# Filtered to switchers only, for example:
-cd_pbl_clean_simplified |>
-  filter(switcher == 1) |>
-  summarise_outcomes_by_period()
-```
-
-```{r, eval=F}
-cd_pbl_clean_simplified |>
-  filter(never_taker == 1) |>
-  summarise_outcomes_by_period()
-```
-
-```{r, eval=F}
-cd_pbl_clean_simplified |>
-  filter(always_taker == 1 | switcher == 1) |>
-  summarise_outcomes_by_period()
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-```{r, fig.width=12, eval=F}
-
-
-run_regs <- function(df, outcome, include_year=T, return_mod=F) {
-  print(paste("############### ", outcome))
-  print("################################")
-  root_reg <- paste0(outcome, " ~ treatment + post_install + treatment*post_install")
-  print(summary(lm(formula = as.formula(root_reg), data = df)))
-  cat("\n****************************************************")
-  print(summary(lm(formula = as.formula(paste0(root_reg, " + mean_crashes_pre2019")), data = df)))
-  cat("\n****************************************************")
-  print(summary(lm(formula = as.formula(paste0(root_reg, " + mean_crashes_pre2019", 
-        ifelse(include_year, " + as.factor(year)", ""))), data = df)))
-  cat("\n****************************************************")
-  full_mod <- lm(formula = as.formula(
-    paste0(root_reg, " + mean_crashes_pre2019 + TOTALTRAVELLANEWIDTH + TOTALPARKINGLANES ",
-          "+ as.factor(WARD_ID) + as.factor(DCFUNCTIONALCLASS) + total_change_trips + cabi_rides",
-           ifelse(include_year, " + as.factor(year)", ""))),
-    data = df)
-  print(summary(full_mod))
-
-  if (return_mod) {
-    return(full_mod)
-  }
-}
-
-# run_regs(df = cd_pbl_clean, outcome = "crashes_per_acre")
-# run_regs(df = cd_pbl_clean, outcome = "injury_crashes_per_acre")
-# run_regs(df = cd_pbl_clean, outcome = "driver_injury_crashes_per_acre")
-# run_regs(df = cd_pbl_clean, outcome = "serious_driver_injury_crashes_per_acre")
-# run_regs(df = cd_pbl_clean, outcome = "bike_injury_crashes_per_acre")
-# run_regs(df = cd_pbl_clean, outcome = "serious_bike_injury_crashes_per_acre")
-# run_regs(df = cd_pbl_clean, outcome = "ped_injury_crashes_per_acre")
-# run_regs(df = cd_pbl_clean, outcome = "serious_ped_injury_crashes_per_acre")
-# 
-# to_plot <- run_regs(df = cd_pbl_clean, outcome = "injury_crashes_per_acre", return_mod=T)
-# plot(to_plot)
-```
-
-
-```{r, eval=F}
-run_regs <- function(df, outcome, include_year = TRUE) {
-  root_reg <- paste0(outcome, " ~ treatment + post_install + treatment*post_install")
-  year_term <- ifelse(include_year, " + as.factor(year)", "")
-
-  formulas <- list(
-    simple = as.formula(root_reg),
-    full   = as.formula(paste0(
-      root_reg,
-      " + mean_crashes_pre2019 + TOTALTRAVELLANEWIDTH + TOTALPARKINGLANES",
-      " + as.factor(WARD_ID) + as.factor(DCFUNCTIONALCLASS) + total_change_trips",
-      year_term
-    ))
-  )
-
-  map_dfr(formulas, \(f) {
-    tidy(lm(f, data = df)) |>
-      filter(term == "treatment:post_install") |>
-      mutate(outcome = outcome)
-  }, .id = "model")
-}
-
-
-plot_effects <- function(outcomes, df) {
-  results <- map_dfr(outcomes, \(o) {
-    run_regs(df = df, outcome = o, include_year = FALSE)
-  })
-  
-  results <- results |>
-    mutate(significance = case_when(
-        p.value < 0.001 ~ "p < 0.001",
-        p.value < 0.01  ~ "p < 0.01",
-        p.value < 0.05  ~ "p < 0.05",
-        p.value < 0.10  ~ "p < 0.10",
-        TRUE            ~ "p ≥ 0.10"
-      ),
-      significance = factor(significance,
-                            levels = c("p < 0.001", "p < 0.01",
-                                       "p < 0.05", "p < 0.10",  "p ≥ 0.10")),
-      model  = factor(model, levels = c("simple", "full"),
-                      labels = c("Simple model", "Full model")),
-      outcome = factor(outcome, levels = outcomes) |> # preserve ordering
-        fct_relabel(\(x) str_replace_all(x, "_", " ") |>
-                                str_replace(" per acre", "") |>
-                                str_to_sentence())
+```{r}
+end_of_treatment = 2023
+min_year         = 2017
+
+rs$length_m <- as.numeric(st_length(rs))
+
+crashes_near_subblocks <- 
+  get_crashes_in_corridors(line_sf = rs, crashes_sf = cd, buffer_in_meters = 4) |>
+  st_drop_geometry() |>
+    # For crashes in multiple buffers, randomly keep one. this will add noise but if anything that will bias our effect sizes downwards.
+    group_by(CRIMEID) |>
+    slice_sample(n = 1) |>         # randomly pick one buffer per crash
+    ungroup() |>
+  # group_by(SUBBLOCKKEY, year, month, date) |>
+  group_by(SUBBLOCKKEY, year) |>
+  summarise(
+    across(ends_with(" Crashes"), \(x) sum(x, na.rm = TRUE)),
+    across(ends_with(" Injury"), \(x) sum(x, na.rm = TRUE)),
+      `Total Crashes`      = n(),
+      TOTALTRAVELLANES     = first(TOTALTRAVELLANES),
+      TOTALPARKINGLANES    = first(TOTALPARKINGLANES),
+      TOTALTRAVELLANEWIDTH = first(TOTALTRAVELLANEWIDTH),
+      WARD_ID              = first(WARD_ID),
+      DCFUNCTIONALCLASS    = first(DCFUNCTIONALCLASS),
+    .groups   = "drop"
+  ) |>
+  ungroup() |>
+  dplyr::left_join(
+  st_drop_geometry(pbl) %>% 
+    mutate(
+           pbl = ifelse((!is.na(BIKELANE_PROTECTED)) | (!is.na(BIKELANE_DUAL_PROTECTED)), 1, 0),
+           bbl = ifelse(is.na(BIKELANE_PROTECTED)    &  is.na(BIKELANE_DUAL_PROTECTED), 1, 0)
+           ) %>%
+    rename(route_name = ROUTENAME) %>%
+    mutate(unique_route_id = paste(route_name, build_year)) %>%
+    select(SUBBLOCKKEY, build_year, pbl, bbl, route_name, unique_route_id), 
+  by = "SUBBLOCKKEY") |>
+  dplyr::left_join(st_drop_geometry(rs) %>% select(SUBBLOCKKEY, length_m), by="SUBBLOCKKEY")
+
+
+# Identify variable groups programmatically
+crash_vars         <- names(crashes_near_subblocks)[
+                        grepl("Crashes$|Injury$", names(crashes_near_subblocks))
+                      ]
+time_invariant_vars <- c("TOTALTRAVELLANES", "TOTALPARKINGLANES", "TOTALTRAVELLANEWIDTH",
+                          "WARD_ID", "DCFUNCTIONALCLASS", "build_year", "pbl", "bbl",
+                          "route_name", "unique_route_id", "length_m")
+
+
+
+crashes_near_subblocks_filled <- crashes_near_subblocks |>
+  filter(year >= min_year) |>
+  # Complete over all SUBBLOCKKEY × existing year-month combinations
+  # using nesting() so we don't invent year-month combos that don't exist in the data
+  complete(
+    SUBBLOCKKEY, 
+    # nesting(year, month, date),
+    # nesting(year),
+    year = min_year:2025,
+    fill = setNames(as.list(rep(0, length(crash_vars))), crash_vars)
+  ) |>
+  # Fill time-invariant characteristics from whichever rows have data for that subblock
+  group_by(SUBBLOCKKEY) |>
+  fill(all_of(time_invariant_vars), .direction = "downup") |>
+  mutate(
+    mean_crashes_per_800_meter_pre = mean(
+      `Total Crashes`[year %in% seq(min_year, 2017, 1)] / length_m[year %in% seq(min_year, 2017, 1)] * 800,
+      na.rm = TRUE
     )
-  
-  sig_colors <- c(
-    "p < 0.001"       = "#2166ac",
-    "p < 0.01"        = "#74add1",
-    "p < 0.05"        = "#fdae61",
-    "p < 0.10"        = "#fee08b",
-    "p ≥ 0.10"        = "#d9d9d9"
-  )
-  
-  ggplot(
-          results,
-         # filter(results, model=="Simple model"), 
-         aes(x = outcome, y = estimate, fill = significance)) +
-    geom_col(position = position_dodge(width = 0.7), width = 0.6) +
-    geom_errorbar(
-      aes(ymin = estimate - 1.645 * std.error,
-          ymax = estimate + 1.645 * std.error),
-      position = position_dodge(width = 0.7),
-      width = 0.2, color = "grey30"
-    ) +
-    geom_hline(yintercept = 0, color = "black", linewidth = 0.5) +
-    scale_fill_manual(values = sig_colors, drop = FALSE) +
-    scale_x_discrete(labels = \(x) str_replace_all(x, "_", "\n")) +
-    facet_wrap(~model, ncol=1) +
-    labs(
-      title = "Effect of protected bike lane installation on crash outcomes",
-      subtitle = "Coefficient on treatment × post-install interaction",
-      x     = NULL,
-      y     = "Estimated effect per acre",
-      fill  = "Significance"
-    ) +
-    theme_minimal() +
-    theme(
-      axis.text.x     = element_text(size = 8),
-      legend.position = "bottom",
-      panel.grid.major.x = element_blank()
+  ) |>
+  ungroup() |>
+  mutate(
+    mean_crashes_per_meter_pre_bin = ntile(mean_crashes_per_800_meter_pre, 3)
+  ) |>
+  mutate(
+    across(
+      all_of(crash_vars),
+      \(x) x / length_m * 800,
+      .names = "{.col} per 800 meters"
     )
-}
+  ) |>
+  filter(build_year %in% 2020:end_of_treatment | is.na(build_year)) |>
+  filter(year %in% c(min_year:2019, (end_of_treatment+1):2025)) |>
+  mutate(
+    treated = if_else(is.na(build_year), 0, 1),
+    post    = if_else(year > end_of_treatment, 1, 0)
+  ) 
+```
+
+```{r}
+# crashes_near_subblocks_filled |>
+#   mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
+#   ggplot(aes(x = log(`Total Crashes per 800 meters`+.0001), fill = treated)) +
+#   geom_density(binwidth = 1, alpha = 0.4, position = "identity") +
+#   scale_fill_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) 
+
+# crashes_near_subblocks_filled |>
+#   mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
+#   mutate(post    = if_else(year >= 2024, "2. post", "1. pre")) |>
+#   ggplot(aes(x = log(`Total Crashes per 800 meters`+.0001), fill = treated)) +
+#   geom_density(binwidth = 1, alpha = 0.4, position = "identity") +
+#   scale_fill_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
+#   facet_wrap(~post, ncol=1)
 
 
-plot_effects(
-  outcomes = c(
-      "crashes_per_acre",
-      "injury_crashes_per_acre",
-      
-      "driver_injury_crashes_per_acre",
-      "serious_driver_injury_crashes_per_acre",
-  
-      "bike_injury_crashes_per_acre",
-      "serious_bike_injury_crashes_per_acre",
-      
-      "ped_injury_crashes_per_acre",
-      "serious_ped_injury_crashes_per_acre"
-      ),
-  df = filter(cd_pbl_clean_simplified, (switcher == 1) | (never_taker == 1) | (late_taker == 1))  
+ecdf <-
+  crashes_near_subblocks_filled |>
+  mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
+  ggplot(aes(x = `Total Crashes per 800 meters`, color = treated)) +
+  stat_ecdf(geom = "step") +
+  scale_color_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
+  labs(color = NULL) +
+  theme(legend.position = "top") +
+  ggtitle("Empirical CDF by group, all years pooled")
+
+ggplotly(ecdf) %>% layout(hovermode = "x")
+
+# ecdf <-
+#   crashes_near_subblocks_filled |>
+#   mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
+#   mutate(post    = if_else(post == 1, "2. After", "1. Before")) |>
+#   ggplot(aes(x = `Any Injury per 800 meters`, color = treated)) +
+#   stat_ecdf(geom = "step") +
+#   scale_color_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
+#   labs(color = NULL) +
+#   facet_wrap(~post) +
+#   ggtitle("Empirical CDF by group, before vs. after")
+# 
+# ggplotly(ecdf) %>% layout(hovermode = "x")
+# 
+# ecdf <-
+#   crashes_near_subblocks_filled |>
+#   mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
+#   mutate(post    = if_else(post == 1, "2. After", "1. Before")) |>
+#   ggplot(aes(x = `Any Injury per 800 meters`, color = treated)) +
+#   stat_ecdf(geom = "step") +
+#   scale_color_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
+#   labs(color = NULL) +
+#   facet_wrap(~post) +
+#   ggtitle("Empirical CDF by group, before vs. after")
+# 
+# ggplotly(ecdf) %>% layout(hovermode = "x")
+
+
+```
+
+
+```{r, fig.width=12, fig.height=8}
+crash_vars_to_plot <- c("Total Crashes per 800 meters", "Any Injury per 800 meters", 
+                         "Vehicle Crashes per 800 meters", "Driver Injury per 800 meters",
+                         "Pedestrian Crashes per 800 meters", "Pedestrian Injury per 800 meters",
+                        "Bike Crashes per 800 meters", "Bicyclist Injury per 800 meters")
+
+panel_pairs <- list(
+  "Overall"     = list(total = "Total Crashes per 800 meters",    injury = "Any Injury per 800 meters"),
+  "Driver"      = list(total = "Vehicle Crashes per 800 meters",  injury = "Driver Injury per 800 meters"),
+  "Walker"  = list(total = "Pedestrian Crashes per 800 meters", injury = "Pedestrian Injury per 800 meters"),
+  "Biker"        = list(total = "Bike Crashes per 800 meters",     injury = "Bicyclist Injury per 800 meters")
+)
+
+plot_data <- map_dfr(names(panel_pairs), \(panel) {
+  pair <- panel_pairs[[panel]]
+  crashes_near_subblocks_filled |>
+    select(treated, post, total = all_of(pair$total), injury = all_of(pair$injury)) |>
+    mutate(panel = panel)
+}) |>
+  mutate(
+    treated = if_else(treated == 1, "Bike lane installs", "Other streets"),
+    post    = factor(if_else(post == 1, "Post", "Pre"), levels = c("Pre", "Post")),
+    panel   = factor(panel, levels = names(panel_pairs))
+  ) |>
+  group_by(treated, post, panel) |>
+  summarise(
+    total  = mean(total,  na.rm = TRUE),
+    injury = mean(injury, na.rm = TRUE),
+    .groups = "drop"
   )
 
-# plot_effects(
-#   outcomes = c(
-#       "total_vehicles_per_acre",
-#       "total_bikes_per_acre",
-#       "total_peds_per_acre"
-#       )
-#   )
+ggplot(plot_data, aes(x = post, group = treated, color = treated)) +
+  geom_line(aes(y = total), linewidth = 0.8, alpha = 0.4, linetype = "dashed") +
+  geom_point(aes(y = total), size = 3, alpha = 0.4) +
+  geom_line(aes(y = injury), linewidth = 0.8) +
+  geom_point(aes(y = injury), size = 3) +
+  facet_wrap(~ panel, 
+             scales = "free_y",
+             ncol = 4) +
+  scale_color_manual(values = c("Other streets" = "grey50", "Bike lane installs" = "#4575b4")) +
+  scale_y_continuous(expand = expansion(mult = 0.2)) +
+  labs(
+    x        = NULL,
+    y        = "Mean annual crashes per subblock",
+    color    = NULL,
+    title    = "Pre vs. post crash rates by mode",
+    subtitle = "Solid = injury crashes, faded/dashed = total crashes"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position  = "bottom",
+    panel.grid.minor = element_blank(),
+    strip.text       = element_text(face = "bold")
+  )
 ```
 
 
 
-```{r, eval=F}
-  outcomes = c(
-      "crashes_per_acre",
-      "injury_crashes_per_acre",
-      
-      "driver_injury_crashes_per_acre",
-      "serious_driver_injury_crashes_per_acre",
-  
-      "bike_injury_crashes_per_acre",
-      "serious_bike_injury_crashes_per_acre",
-      
-      "ped_injury_crashes_per_acre",
-      "serious_ped_injury_crashes_per_acre"
-      )
+
+
+
+
+```{r}
+outcomes <- c("Total Crashes per 800 meters", "Any Injury per 800 meters", 
+                         "Vehicle Crashes per 800 meters", "Driver Injury per 800 meters",
+                         "Bike Crashes per 800 meters", "Bicyclist Injury per 800 meters",
+                         "Pedestrian Crashes per 800 meters", "Pedestrian Injury per 800 meters")
 
 summary_df <-
-  cd_pbl_clean_simplified |>
-  filter(switcher == 1 | never_taker == 1) |>
-  select(!!!sym(ANALYSIS_LEVEL), post_install, treatment, ends_with("_per_acre")) |>
+  crashes_near_subblocks_filled |>
+  select(SUBBLOCKKEY, post, treated, ends_with(" per 800 meters")) |>
   pivot_longer(cols = all_of(outcomes),
                names_to  = "outcome",
                values_to = "value") |>
-  group_by(outcome, post_install, treatment) |>        # add treatment to grouping
+  group_by(outcome, post, treated) |>
   summarise(
     mean = mean(value, na.rm = TRUE),
     .groups = "drop"
   ) |>
   mutate(
-    post_install = factor(post_install, levels = c(0, 1),
+    post = factor(post, levels = c(0, 1),
                           labels = c("Pre", "Post")),
-    treatment = factor(treatment, levels = c(0, 1),
-                       labels = c("Other streets", "PBL installs")),
+    treated = factor(treated, levels = c(0, 1),
+                       labels = c("Other streets", "Bike lane installs")),
     outcome = factor(outcome, levels = outcomes) |>
                 fct_relabel(\(x) str_replace_all(x, "_", " ") |>
-                              str_replace(" per acre", "") |>
+                              str_replace(" per 800 meters", "") |>
                               str_to_sentence())
   )
 
-ggplot(summary_df, aes(x = post_install, y = mean,
-                       color = treatment, group = treatment)) +
+ggplot(summary_df, aes(x = post, y = mean,
+                       color = treated, group = treated)) +
   geom_point(size = 3) +
   geom_line(linewidth = 0.8) +
   facet_wrap(~outcome, nrow = 1,
              labeller = labeller(outcome = label_wrap_gen(15))) +
   scale_color_manual(values = c("Other streets"   = "grey50",
-                                "PBL installs" = "#4575b4")) +
+                                "Bike lane installs" = "#4575b4")) +
   labs(
     title = "Mean annual crashes per acre before and after bike lane installation",
     x     = NULL,
@@ -939,49 +931,91 @@ ggplot(summary_df, aes(x = post_install, y = mean,
 
 
 
-```{r, eval=F}
 
-# # Get unique treated subblock keys
-# treated_keys <- cd_pbl_clean_simplified |>
-#   filter(treatment == 1) |>
-#   distinct(SUBBLOCKKEY)
-# 
-# # Merge onto rs geometry
-# rs_treatment <- rs |>
-#   inner_join(treated_keys, by = "SUBBLOCKKEY")
-# 
-# # Plot
-# leaflet(rs_treatment |> st_zm(drop = TRUE)) |>
-#   addProviderTiles(providers$CartoDB.Positron) |>
-#   addPolylines(
-#     color   = "#4575b4",
-#     weight  = 2.5,
-#     opacity = 0.85,
-#     label   = ~SUBBLOCKKEY,
-#     labelOptions = labelOptions(textsize = "12px", direction = "auto"),
-#     highlightOptions = highlightOptions(
-#       weight      = 7,
-#       color       = "#222222",
-#       opacity     = 1,
-#       bringToFront = TRUE
-#     )
-#   )
 
+
+
+
+
+
+
+```{r, fig.width=12, fig.height=8}
+# ── Observed DiD statistic ─────────────────────────────────────────────────────
+compute_did <- function(df, outcome) {
+  df |>
+    group_by(treated, post) |>
+    summarise(mean_val = mean(.data[[outcome]], na.rm = TRUE), .groups = "drop") |>
+    pivot_wider(names_from = post, values_from = mean_val, names_prefix = "post_") |>
+    mutate(change = post_1 - post_0) |>
+    summarise(did = diff(change)) |>   # treated change minus control change
+    pull(did)
+}
+
+# ── Pre-compute once ───────────────────────────────────────────────────────────
+subblock_treatment <- crashes_near_subblocks_filled |> distinct(SUBBLOCKKEY, treated)
+df_no_treated      <- crashes_near_subblocks_filled |> select(-treated)
+
+# ── Permutation test function ──────────────────────────────────────────────────
+run_permutation_test <- function(outcome_var, df, df_with_treated, lookup, 
+                                 n_permutations = 500,
+                                 alternative = "less") {  # "less" or "greater"
+  
+  observed_did <- compute_did(df_with_treated, outcome_var)
+  
+  permuted_dids <- map_dbl(1:n_permutations, \(i) {
+    permuted <- lookup |> mutate(treated = sample(treated))
+    df |>
+      left_join(permuted, by = "SUBBLOCKKEY") |>
+      compute_did(outcome_var)
+  })
+  
+  # One-sided p-value
+  p_value <- if (alternative == "less") {
+    mean(permuted_dids <= observed_did)   # H1: DiD < 0 (crashes went down)
+  } else {
+    mean(permuted_dids >= observed_did)   # H1: DiD > 0 (bike crashes went up)
+  }
+  
+  clean_label <- str_remove(outcome_var, " per 800 meters")
+  
+  tibble(did = permuted_dids) |>
+    ggplot(aes(x = did)) +
+    geom_histogram(bins = 50, fill = "grey70", color = "white") +
+    geom_vline(xintercept = observed_did, color = "#542788", linewidth = 1) +
+    labs(
+      x        = "Permuted DiD",
+      y        = "Count",
+      title    = clean_label,
+      subtitle = sprintf("DiD = %.4f, p = %.3f (%s)", observed_did, p_value, alternative)
+    ) +
+    theme_minimal(base_size = 9) +
+    theme(
+      plot.title    = element_text(face = "bold", size = 9),
+      plot.subtitle = element_text(size = 8)
+    )
+}
+
+# ── Run with appropriate one-sided test per outcome ────────────────────────────
+bike_vars  <- c("Bike Crashes per 800 meters", "Bicyclist Injury per 800 meters")
+
+n = 500
+plots <- map(crash_vars_to_plot, \(v) {
+  run_permutation_test(
+    outcome_var     = v,
+    df              = df_no_treated,
+    df_with_treated = crashes_near_subblocks_filled,
+    lookup          = subblock_treatment,
+    n_permutations  = n,
+    alternative     = if_else(v %in% bike_vars, "greater", "less")
+  )
+})
+
+patchwork::wrap_plots(plots, ncol = 2) +
+  patchwork::plot_annotation(
+    title    = "Permutation tests: DiD estimates (one-sided)",
+    subtitle = sprintf("%d permutations per outcome", n)
+  )
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

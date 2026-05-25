@@ -29,16 +29,23 @@ plot_leaflet <- function(points_sf = NULL, polygons_sf = NULL, lines_sf = NULL, 
   if (!is.null(polygons_sf)) polygons_sf <- st_transform(polygons_sf, 4326)
   if (!is.null(lines_sf))    lines_sf    <- st_transform(lines_sf,    4326)
   
+  # drop any NA geometries:
+  if (!is.null(points_sf))   points_sf   <- points_sf[!is.na(st_geometry(points_sf)), ]
+  if (!is.null(polygons_sf)) polygons_sf <- polygons_sf[!is.na(st_geometry(polygons_sf)), ]
+  if (!is.null(lines_sf))    lines_sf    <- lines_sf[!is.na(st_geometry(lines_sf)), ]
+  
   if (!is.null(bbox)) {
     crop_box <- st_bbox(
-      c(xmin = bbox["xmin"], ymin = bbox["ymin"],
-        xmax = bbox["xmax"], ymax = bbox["ymax"]),
+      c(xmin = as.numeric(bbox["xmin"]),
+        ymin = as.numeric(bbox["ymin"]),
+        xmax = as.numeric(bbox["xmax"]),
+        ymax = as.numeric(bbox["ymax"])),
       crs = 4326
     )
     if (!is.null(points_sf))   points_sf   <- st_crop(points_sf,   crop_box)
     if (!is.null(polygons_sf)) polygons_sf <- st_crop(polygons_sf, crop_box)
     if (!is.null(lines_sf))    lines_sf    <- st_crop(lines_sf,    crop_box)
-  }
+  } 
   
   m <- leaflet() |>
     addProviderTiles(providers$CartoDB.Positron)
