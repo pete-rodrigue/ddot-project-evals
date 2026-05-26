@@ -758,6 +758,9 @@ crashes_near_subblocks_filled <- crashes_near_subblocks |>
   ) 
 ```
 
+
+Here are the empirical cumulative distribution functions:
+
 ```{r}
 # crashes_near_subblocks_filled |>
 #   mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
@@ -786,18 +789,18 @@ ecdf <-
 
 ggplotly(ecdf) %>% layout(hovermode = "x")
 
-# ecdf <-
-#   crashes_near_subblocks_filled |>
-#   mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
-#   mutate(post    = if_else(post == 1, "2. After", "1. Before")) |>
-#   ggplot(aes(x = `Any Injury per 800 meters`, color = treated)) +
-#   stat_ecdf(geom = "step") +
-#   scale_color_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
-#   labs(color = NULL) +
-#   facet_wrap(~post) +
-#   ggtitle("Empirical CDF by group, before vs. after")
-# 
-# ggplotly(ecdf) %>% layout(hovermode = "x")
+ecdf <-
+  crashes_near_subblocks_filled |>
+  mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
+  mutate(post    = if_else(post == 1, "2. After", "1. Before")) |>
+  ggplot(aes(x = `Total Crashes per 800 meters`, color = treated)) +
+  stat_ecdf(geom = "step") +
+  scale_color_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
+  labs(color = NULL) +
+  facet_wrap(~post) +
+  ggtitle("Empirical CDF by group, before vs. after")
+
+ggplotly(ecdf) %>% layout(hovermode = "x")
 # 
 # ecdf <-
 #   crashes_near_subblocks_filled |>
@@ -815,6 +818,8 @@ ggplotly(ecdf) %>% layout(hovermode = "x")
 
 ```
 
+
+Here are the changes in means across different variables. The bike lane streets start from a higher level of crashes and, with the exception of bike crashes, see a bigger drop in crashes. (This is likely due to a large increase in bike traffic).
 
 ```{r, fig.width=12, fig.height=8}
 crash_vars_to_plot <- c("Total Crashes per 800 meters", "Any Injury per 800 meters", 
@@ -878,7 +883,7 @@ ggplot(plot_data, aes(x = post, group = treated, color = treated)) +
 
 
 
-```{r}
+```{r, eval=F}
 outcomes <- c("Total Crashes per 800 meters", "Any Injury per 800 meters", 
                          "Vehicle Crashes per 800 meters", "Driver Injury per 800 meters",
                          "Bike Crashes per 800 meters", "Bicyclist Injury per 800 meters",
@@ -934,6 +939,7 @@ ggplot(summary_df, aes(x = post, y = mean,
 
 
 
+We can conduct permutation tests to get a sense for the statistical significance of these differences in means. Did streets with bike lanes see bigger declines in crashes, other than bike crashes, than other streets? The answer seems to be yes:
 
 
 
