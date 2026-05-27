@@ -1,6 +1,6 @@
 ---
 title: "Analyzing DDOT projects"
-author: "pete rodrigue"
+author: "Pete Rodrigue & Spencer Ainsworth"
 date: "`r Sys.Date()`"
 output:
   html_document:
@@ -297,7 +297,7 @@ eval_summary |>
   ggtitle("We're more or less able to replicate DDOT's results")
 ```
 
-You can view detailed tables and time series by clicking the little arrows below. The line charts are smoothed, showing a 4 month moving average. 
+You can view detailed tables and time series by clicking the little arrows below. The line charts are smoothed, showing a 4 month moving average. Below the table, you can also see the change in "micromobility trips" (ebikes and scooters) from [RideReport.com](https://public.ridereport.com/dc?x=-77.0098713&y=38.9130548&z=10.91&time=2026-Q1).
 
 
 ```{r, results="asis"}
@@ -320,31 +320,6 @@ for (myl in eval_objs) {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<br><br>
 
 ## Using additional data to expand on DDOT project evaluations 
 
@@ -392,14 +367,32 @@ pbl               <- load_pbl_data(PBLS_ONLY)
 cabi_sf           <- load_cabi_data()[[1]]
 annual_cabi_rides <- load_cabi_data()[[2]]
 rs                <- load_subblocks()
+mm_trips <- st_read("data/DC_RideReport_MM_Trips.geojson", quiet=T) 
+segment_lookup <- 
+  readr::read_csv(file = "data/trips_subblocks_matched.csv", show_col_types = F)
 
-pbl_unioned <- pbl                                     |>
+mm_trips_tbl <-
+  mm_trips                               %>%
+  st_drop_geometry()                     %>%
+  mutate(
+    mean_2019_trips  = (trips_2019_Q1 + trips_2019_Q2 + trips_2019_Q3 + trips_2019_Q4) / 4,
+    mean_2024_trips  = (trips_2024_Q1 + trips_2024_Q2 + trips_2024_Q3 + trips_2024_Q4) / 4,
+    mean_2025_trips  = (trips_2025_Q1 + trips_2025_Q2 + trips_2025_Q3 + trips_2025_Q4) / 4,
+    mean_24_25_trips = (mean_2024_trips + mean_2025_trips) / 2
+  )                                      %>%
+  select(OBJECTID, starts_with("mean_")) %>%
+  replace(is.na(.), 0)
+
+
+pbl <- pbl |>
   mutate(
     ROUTENAME = if_else(ROUTENAME == "Ramp-36001642", "IRVING ST NW", ROUTENAME),
     ROUTENAME = if_else(ROUTENAME == "KENYON ST NW" , "IRVING ST NW", ROUTENAME),
     ROUTENAME = if_else(ROUTENAME == "IRVING ST NE" , "IRVING ST NW", ROUTENAME),
     ROUTENAME = if_else(ROUTENAME == "PARK PL NW"   , "5TH ST NW"   , ROUTENAME),
-    )                                                  |>
+    ) 
+
+pbl_unioned <- pbl                                     |>
   group_by(ROUTENAME, build_year)                      |>
   summarise(
     min_install = min(build_year, na.rm = TRUE),
@@ -410,7 +403,29 @@ pbl_unioned <- pbl                                     |>
     n_segments  = n(),
     .groups = "drop" 
   )                                                    |>
-  filter(n_segments >= 8) # >= 6
+  filter(n_segments >= 8)
+
+bl_subblock_trips <- 
+  pbl                                                  |>
+  group_by(ROUTENAME, build_year)                      |>
+  mutate(
+    min_install = min(build_year, na.rm = TRUE),
+    max_install = max(build_year, na.rm = TRUE),
+    `Has some protected lane segments` = if_else(
+      max(!is.na(BIKELANE_PROTECTED) + !is.na(BIKELANE_DUAL_PROTECTED)) == 1,
+          1, 0),
+    n_segments  = n(),
+    .groups = "drop" 
+  )                                                    |>
+  ungroup()                                            |>
+  filter(n_segments >= 8)                              |>
+  select(SUBBLOCKKEY, build_year,
+         max_install, ROUTENAME)                       |>
+  mutate(route_unique_id =
+           paste0(ROUTENAME, " (", max_install, ")"))  |>
+  st_drop_geometry()                                   |>
+  dplyr::left_join(segment_lookup, by="SUBBLOCKKEY")   |>
+  dplyr::left_join(mm_trips_tbl, by = "OBJECTID")      
 ```
 
 ```{r}
@@ -455,20 +470,15 @@ already_shown <- c("21ST ST NW (2022)", "9TH ST NW (2023)", "G ST NW (2020)",  "
 
 
 ```{r}
-pbl_summary <- data.frame("Project" = NA, "Outcome" = NA, "PBL" = NA, "% change" = NA)
-pbl_objs    <- list()
+bl_summary <- data.frame("Project" = NA, "Outcome" = NA, "% change" = NA, "MM change" = NA)
+bl_objs    <- list()
 for (proj in unique(cd_in_projs_summed$route_unique_id)) {  
   
   temp_df <- filter(cd_in_projs_summed, year >= 2016 & route_unique_id == proj)
   
   proj_year <- unique(temp_df$min_install)
   if(proj_year < 2017) {next}
-  is_pbl = temp_df$`Has some protected lane segments`[1]==1
-  if(!is_pbl) {next}
   if (temp_df$route_unique_id[1] %in% already_shown) {next}
-  
-  pbl_flag <- ifelse(is_pbl, " [PBL]", "[BBL]")
-  
   
   if (proj_year < 2020) {
     p1sy = 2016; p1ey = proj_year - 1; p2sy = 2024; p2ey = 2025
@@ -486,7 +496,7 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
     smoothing_factor = 4,
     period_1         = p1,
     period_2         = p2,
-    title            = paste(proj, pbl_flag)
+    title            = proj
   )
   
   plot_table <- 
@@ -496,101 +506,51 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
              `After, per month`  = Post_per_month,
              `% change`          = pct_change)
   
-  pbl_objs <- c(pbl_objs, list(list(proj, is_pbl, rvs[[1]], plot_table)))
+  mm_data <- 
+    filter(bl_subblock_trips, route_unique_id==proj)                     |> 
+    summarize(mean_2019_trips  = round(mean(mean_2019_trips , na.rm=T)), 
+              mean_24_25_trips = round(mean(mean_24_25_trips, na.rm=T))) |>
+    mutate(mm_increase     = mean_24_25_trips - mean_2019_trips,
+           mm_pct_increase = round(100*(mean_24_25_trips - mean_2019_trips) / mean_2019_trips))
   
-  pbl_summary <- bind_rows(
-    pbl_summary, 
+  bl_objs <- c(bl_objs, 
+               list(list("project_name"=proj, 
+                         "plotly_chart"=rvs[[1]], 
+                         "table"=plot_table,
+                         "mm_data" = mm_data
+                         )
+                    )
+               )
+  
+  bl_summary <- bind_rows(
+    bl_summary, 
     data.frame("Project" = rep(proj, 2), 
                "Outcome" = c("All Crashes", "Any Injury"), 
-               "PBL" = T, 
                "% change" = c(plot_table$`% change`[plot_table$Outcome == "All Crashes"],
                               plot_table$`% change`[plot_table$Outcome == "Any Injury"])
                )
   )
 }
-pbl_summary <- pbl_summary[!is.na(pbl_summary$Outcome),]
+bl_summary <- bl_summary[!is.na(bl_summary$Outcome),]
 ```
 
-
-
-```{r}
-buffered_summary <- data.frame("Project" = NA, "Outcome" = NA, "PBL" = NA, "% change" = NA)
-buffered_objs    <- list()
-for (proj in unique(cd_in_projs_summed$route_unique_id)) {  
-  
-  temp_df <- filter(cd_in_projs_summed, year >= 2016 & route_unique_id == proj)
-  
-  proj_year <- unique(temp_df$min_install)
-  if(proj_year < 2017) {next}
-  is_pbl = temp_df$`Has some protected lane segments`[1]==1
-  if(is_pbl) {next}
-  if (temp_df$route_unique_id[1] %in% already_shown) {next}
-  
-  pbl_flag <- ifelse(is_pbl, " [PBL]", " [BBL]")
-  
-  if (proj_year < 2020) {
-    p1sy = 2016; p1ey = proj_year - 1; p2sy = 2024; p2ey = 2025
-  } else if (proj_year == 2024) {
-    p1sy = 2017; p1ey = 2019; p2sy = 2025; p2ey = 2025
-  } else {
-    p1sy = 2017; p1ey = 2019; p2sy = 2024; p2ey = 2025
-  }
-    
-  p1      <- list(label = "Pre" ,  start = paste0(p1sy, "-01-01"), end = paste0(p1ey, "-12-31"))
-  p2      <- list(label = "Post",  start = paste0(p2sy, "-01-01"), end = paste0(p2ey, "-12-31"))
-  
-  rvs <- plot_crashes_over_time(
-    data             = temp_df,      
-    smoothing_factor = 4,
-    period_1         = p1,
-    period_2         = p2,
-    title            = paste(proj, pbl_flag)
-  )
-  
-  plot_table <- 
-    rvs[[3]] %>% 
-      rename(Outcome = series,
-             `Before, per month` = Pre_per_month,
-             `After, per month`  = Post_per_month,
-             `% change`          = pct_change)
-  
-  buffered_objs <- c(buffered_objs, list(list(proj, is_pbl, rvs[[1]], plot_table)))
-  
-  buffered_summary <- bind_rows(
-    buffered_summary, 
-    data.frame("Project" = rep(proj, 2), 
-               "Outcome" = c("All Crashes", "Any Injury"), 
-               "PBL" = F, 
-               "% change" = c(plot_table$`% change`[plot_table$Outcome == "All Crashes"],
-                              plot_table$`% change`[plot_table$Outcome == "Any Injury"])
-               )
-  )
-}
-buffered_summary <- buffered_summary[!is.na(buffered_summary$Outcome),]
-```
 
 
 ```{r, fig.height=8, fig.width=10}
-all_summaries <- unique(bind_rows(pbl_summary, buffered_summary))
-
-all_summaries |>
-  mutate(PBL = if_else(PBL, "PBL Project", "Non-PBL Project")) |>
+bl_summary |>
+  mutate(Project = reorder(Project, -X..change)) |>
   ggplot(aes(x = X..change, y = Project, color = Outcome)) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5) +
   geom_point(size = 3) +
   geom_vline(
-    data = all_summaries |>
-      mutate(PBL = if_else(PBL, "PBL Project", "Non-PBL Project")) |>
-      group_by(PBL, Outcome) |>
+    data = bl_summary    |>
+      group_by(Outcome)  |>
       summarise(mean_change = mean(X..change, na.rm = TRUE), .groups = "drop"),
     aes(xintercept = mean_change, color = Outcome),
     linetype = "solid",
     linewidth = 0.8, 
     alpha=.5
   ) +
-  facet_wrap(~ PBL, ncol = 1, scales = "free_y",
-             labeller = labeller(PBL = c("PBL Project" = "PBL Project", 
-                                         "Non-PBL Project" = "Non-PBL Project"))) +
   scale_x_continuous(labels = scales::label_percent(scale = 1)) +
   labs(x = "% Change", y = NULL, color = "Outcome") +
   theme_minimal(base_size = 11) +
@@ -600,8 +560,9 @@ all_summaries |>
     strip.text         = element_text(face = "bold"),
     legend.position    = "bottom"
   ) +
-  ggtitle("With a few exceptions, these projects lead to massive declines in crashes")
+  ggtitle("With a couple exceptions, these projects lead to massive declines in crashes")
 ```
+
 
 <br>
 
@@ -609,32 +570,23 @@ You can view detailed tables and time series by clicking the little arrows below
 
 <br>
 
-Protected bike lanes:
 
 ```{r, results="asis"}
-for (myl in pbl_objs) {
-  cat("\n<details>\n<summary>", myl[[1]], "</summary>\n\n")
-  print(myl[[3]])
-  cat("\n")
-  print(myl[[4]] %>% knitr::kable())
+for (myl in bl_objs) {
+  cat("<details>\n<summary>", myl$project_name, "</summary>")
+  print(myl$plotly_chart)
+  print(myl$table %>% knitr::kable())
+  cat(paste0("<strong>Change in micromobility usage</strong><br>", 
+               "2019 micromobility trips: ", format(myl$mm_data$mean_2019_trips, big.mark = ",") , "<br>",
+               "Avg. of '24 & '25 trips:  ", format(myl$mm_data$mean_24_25_trips, big.mark = ","), "<br>",
+               "Increase in trips:        ", format(myl$mm_data$mm_increase, big.mark = ",")     ,  "<br>",
+               "% increase:               ", format(myl$mm_data$mm_pct_increase, big.mark = ",") ,  "<br>"
+               )
+        )
   cat("\n</details>\n")
 }
 ```
 
-<br>
-
-Buffered bike lanes:
-
-
-```{r, results="asis"}
-for (myl in buffered_objs) {
-  cat("\n<details>\n<summary>", myl[[1]], "</summary>\n\n")
-  print(myl[[3]])
-  cat("\n")
-  print(myl[[4]] %>% knitr::kable())
-  cat("\n</details>\n")
-}
-```
 
 <br><br>
 
@@ -759,66 +711,6 @@ crashes_near_subblocks_filled <- crashes_near_subblocks |>
 ```
 
 
-Here are the empirical cumulative distribution functions:
-
-```{r}
-# crashes_near_subblocks_filled |>
-#   mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
-#   ggplot(aes(x = log(`Total Crashes per 800 meters`+.0001), fill = treated)) +
-#   geom_density(binwidth = 1, alpha = 0.4, position = "identity") +
-#   scale_fill_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) 
-
-# crashes_near_subblocks_filled |>
-#   mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
-#   mutate(post    = if_else(year >= 2024, "2. post", "1. pre")) |>
-#   ggplot(aes(x = log(`Total Crashes per 800 meters`+.0001), fill = treated)) +
-#   geom_density(binwidth = 1, alpha = 0.4, position = "identity") +
-#   scale_fill_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
-#   facet_wrap(~post, ncol=1)
-
-
-ecdf <-
-  crashes_near_subblocks_filled |>
-  mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
-  ggplot(aes(x = `Total Crashes per 800 meters`, color = treated)) +
-  stat_ecdf(geom = "step") +
-  scale_color_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
-  labs(color = NULL) +
-  theme(legend.position = "top") +
-  ggtitle("Empirical CDF by group, all years pooled")
-
-ggplotly(ecdf) %>% layout(hovermode = "x")
-
-ecdf <-
-  crashes_near_subblocks_filled |>
-  mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
-  mutate(post    = if_else(post == 1, "2. After", "1. Before")) |>
-  ggplot(aes(x = `Total Crashes per 800 meters`, color = treated)) +
-  stat_ecdf(geom = "step") +
-  scale_color_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
-  labs(color = NULL) +
-  facet_wrap(~post) +
-  ggtitle("Empirical CDF by group, before vs. after")
-
-ggplotly(ecdf) %>% layout(hovermode = "x")
-# 
-# ecdf <-
-#   crashes_near_subblocks_filled |>
-#   mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
-#   mutate(post    = if_else(post == 1, "2. After", "1. Before")) |>
-#   ggplot(aes(x = `Any Injury per 800 meters`, color = treated)) +
-#   stat_ecdf(geom = "step") +
-#   scale_color_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
-#   labs(color = NULL) +
-#   facet_wrap(~post) +
-#   ggtitle("Empirical CDF by group, before vs. after")
-# 
-# ggplotly(ecdf) %>% layout(hovermode = "x")
-
-
-```
-
-
 Here are the changes in means across different variables. The bike lane streets start from a higher level of crashes and, with the exception of bike crashes, see a bigger drop in crashes. (This is likely due to a large increase in bike traffic).
 
 ```{r, fig.width=12, fig.height=8}
@@ -829,9 +721,9 @@ crash_vars_to_plot <- c("Total Crashes per 800 meters", "Any Injury per 800 mete
 
 panel_pairs <- list(
   "Overall"     = list(total = "Total Crashes per 800 meters",    injury = "Any Injury per 800 meters"),
-  "Driver"      = list(total = "Vehicle Crashes per 800 meters",  injury = "Driver Injury per 800 meters"),
-  "Walker"  = list(total = "Pedestrian Crashes per 800 meters", injury = "Pedestrian Injury per 800 meters"),
-  "Biker"        = list(total = "Bike Crashes per 800 meters",     injury = "Bicyclist Injury per 800 meters")
+  "People driving"      = list(total = "Vehicle Crashes per 800 meters",  injury = "Driver Injury per 800 meters"),
+  "People walking"  = list(total = "Pedestrian Crashes per 800 meters", injury = "Pedestrian Injury per 800 meters"),
+  "People bicycling"        = list(total = "Bike Crashes per 800 meters",     injury = "Bicyclist Injury per 800 meters")
 )
 
 plot_data <- map_dfr(names(panel_pairs), \(panel) {
@@ -874,62 +766,6 @@ ggplot(plot_data, aes(x = post, group = treated, color = treated)) +
     legend.position  = "bottom",
     panel.grid.minor = element_blank(),
     strip.text       = element_text(face = "bold")
-  )
-```
-
-
-
-
-
-
-
-```{r, eval=F}
-outcomes <- c("Total Crashes per 800 meters", "Any Injury per 800 meters", 
-                         "Vehicle Crashes per 800 meters", "Driver Injury per 800 meters",
-                         "Bike Crashes per 800 meters", "Bicyclist Injury per 800 meters",
-                         "Pedestrian Crashes per 800 meters", "Pedestrian Injury per 800 meters")
-
-summary_df <-
-  crashes_near_subblocks_filled |>
-  select(SUBBLOCKKEY, post, treated, ends_with(" per 800 meters")) |>
-  pivot_longer(cols = all_of(outcomes),
-               names_to  = "outcome",
-               values_to = "value") |>
-  group_by(outcome, post, treated) |>
-  summarise(
-    mean = mean(value, na.rm = TRUE),
-    .groups = "drop"
-  ) |>
-  mutate(
-    post = factor(post, levels = c(0, 1),
-                          labels = c("Pre", "Post")),
-    treated = factor(treated, levels = c(0, 1),
-                       labels = c("Other streets", "Bike lane installs")),
-    outcome = factor(outcome, levels = outcomes) |>
-                fct_relabel(\(x) str_replace_all(x, "_", " ") |>
-                              str_replace(" per 800 meters", "") |>
-                              str_to_sentence())
-  )
-
-ggplot(summary_df, aes(x = post, y = mean,
-                       color = treated, group = treated)) +
-  geom_point(size = 3) +
-  geom_line(linewidth = 0.8) +
-  facet_wrap(~outcome, nrow = 1,
-             labeller = labeller(outcome = label_wrap_gen(15))) +
-  scale_color_manual(values = c("Other streets"   = "grey50",
-                                "Bike lane installs" = "#4575b4")) +
-  labs(
-    title = "Mean annual crashes per acre before and after bike lane installation",
-    x     = NULL,
-    y     = "Crashes per acre",
-    color = NULL
-  ) +
-  theme_minimal() +
-  theme(
-    legend.position    = "bottom",
-    panel.grid.major.x = element_blank(),
-    strip.text         = element_text(size = 7)
   )
 ```
 
@@ -1026,10 +862,138 @@ patchwork::wrap_plots(plots, ncol = 2) +
 
 
 
+What's going on with people crashing on bicycles on the bike lane streets? Part of the answer seems to be that there are just way, way more people biking on these streets than there were previously. The increase is much larger on streets that got bike lanes than on other streets.
+
+Here are the trip totals for all road segments in DC:
+
+```{r}
+to_plot <-
+  mm_trips %>%
+  st_drop_geometry() %>%
+  summarise(across(starts_with("trips_"), sum, na.rm = TRUE)) %>%
+  tidyr::pivot_longer(col = everything(), names_to = "period", values_to = "trips") %>%
+    mutate(
+    year    = as.integer(stringr::str_extract(period, "\\d{4}")),
+    quarter = as.integer(stringr::str_extract(period, "(?<=Q)\\d")),
+    time    = year + (quarter - 1) / 4,
+    label   = paste0(year, " Q", quarter)
+  )
+
+ggplot(to_plot, aes(x = time, y = trips)) +
+  geom_line(linewidth = 0.8, color="#58933e") +
+  geom_point(size = 2.5, color="#58933e") +
+  scale_x_continuous(breaks = to_plot$time[seq(1, nrow(to_plot), 4)], labels = to_plot$label[seq(1, nrow(to_plot), 4)]) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x=NULL, y = "Trips") +
+  ggtitle("Micromobility trips up")
+```
+
+
+But as the chart below shows, rides have increased way more on streets that had bike lanes installed:
+
+
+```{r}
+crashes_near_subblocks_filled                                                  |>
+  dplyr::left_join(segment_lookup, by="SUBBLOCKKEY")                           |>
+  dplyr::left_join(mm_trips_tbl, by = "OBJECTID")                              |> 
+  group_by(treated)                                                            |>
+  summarize(
+    mean_2019_trips = mean(mean_2019_trips, na.rm=T),
+    mean_24_25_trips = mean(mean_24_25_trips, na.rm=T)
+  )                                                                            |>
+  tidyr::pivot_longer(cols = -treated, names_to = "post", values_to = "trips") |>
+  mutate(post = if_else(post=="mean_2019_trips", 0, 1))                        |>
+  
+  mutate(
+    treated = if_else(treated == 1, "Bike lane streets", "Other streets"),
+    post    = factor(if_else(post == 1, "After", "Before"), levels = c("Before", "After"))
+  ) |>
+  ggplot(aes(x = post, y = trips, fill = treated)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  geom_text(aes(label = round(trips, 0)),
+            position = position_dodge(width = 0.9),
+            vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = c("Other streets" = "grey50", "Bike lane streets" = "#4575b4")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(
+    x    = NULL,
+    y    = "Trips",
+    fill = NULL,
+    title = "Trips before and after bike lane installation"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position  = "bottom",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+  
+```
 
 
 
+<br><br>
+
+<details><summary>Click here to see some empirical CDFs</summary>
+
+Here are the empirical cumulative distribution functions:
+
+```{r}
+# crashes_near_subblocks_filled |>
+#   mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
+#   ggplot(aes(x = log(`Total Crashes per 800 meters`+.0001), fill = treated)) +
+#   geom_density(binwidth = 1, alpha = 0.4, position = "identity") +
+#   scale_fill_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) 
+
+# crashes_near_subblocks_filled |>
+#   mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
+#   mutate(post    = if_else(year >= 2024, "2. post", "1. pre")) |>
+#   ggplot(aes(x = log(`Total Crashes per 800 meters`+.0001), fill = treated)) +
+#   geom_density(binwidth = 1, alpha = 0.4, position = "identity") +
+#   scale_fill_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
+#   facet_wrap(~post, ncol=1)
 
 
+ecdf <-
+  crashes_near_subblocks_filled |>
+  mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
+  ggplot(aes(x = `Total Crashes per 800 meters`, color = treated)) +
+  stat_ecdf(geom = "step") +
+  scale_color_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
+  labs(color = NULL) +
+  theme(legend.position = "top") +
+  ggtitle("Empirical CDF by group, all years pooled")
+
+ggplotly(ecdf) %>% layout(hovermode = "x")
+
+ecdf <-
+  crashes_near_subblocks_filled |>
+  mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
+  mutate(post    = if_else(post == 1, "2. After", "1. Before")) |>
+  ggplot(aes(x = `Total Crashes per 800 meters`, color = treated)) +
+  stat_ecdf(geom = "step") +
+  scale_color_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
+  labs(color = NULL) +
+  facet_wrap(~post) +
+  ggtitle("Empirical CDF by group, before vs. after")
+
+ggplotly(ecdf) %>% layout(hovermode = "x")
+# 
+# ecdf <-
+#   crashes_near_subblocks_filled |>
+#   mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
+#   mutate(post    = if_else(post == 1, "2. After", "1. Before")) |>
+#   ggplot(aes(x = `Any Injury per 800 meters`, color = treated)) +
+#   stat_ecdf(geom = "step") +
+#   scale_color_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
+#   labs(color = NULL) +
+#   facet_wrap(~post) +
+#   ggtitle("Empirical CDF by group, before vs. after")
+# 
+# ggplotly(ecdf) %>% layout(hovermode = "x")
 
 
+```
+
+</details>
