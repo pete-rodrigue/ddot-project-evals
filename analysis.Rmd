@@ -558,9 +558,35 @@ bl_summary |>
     strip.text         = element_text(face = "bold"),
     legend.position    = "bottom"
   ) +
-  ggtitle("With a couple exceptions, these projects lead to massive declines in crashes")
+  ggtitle("These projects lead to massive declines in crashes")
 ```
-
+```{r, fig.height=8, fig.width=10}
+bl_summary |>
+  mutate(Project = reorder(Project, -X..change)) |>
+  filter(!(Project %in% c("K ST NW (2021)", "C ST NE (2023)"))) |>
+  ggplot(aes(x = X..change, y = Project, color = Outcome)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5) +
+  geom_point(size = 3) +
+  geom_vline(
+    data = bl_summary    |>
+      group_by(Outcome)  |>
+      summarise(mean_change = mean(X..change, na.rm = TRUE), .groups = "drop"),
+    aes(xintercept = mean_change, color = Outcome),
+    linetype = "solid",
+    linewidth = 0.8, 
+    alpha=.5
+  ) +
+  scale_x_continuous(labels = scales::label_percent(scale = 1)) +
+  labs(x = "% Change", y = NULL, color = "Outcome") +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor   = element_blank(),
+    strip.text         = element_text(face = "bold"),
+    legend.position    = "bottom"
+  ) +
+  ggtitle("These projects lead to massive declines in crashes")
+```
 
 <br>
 
