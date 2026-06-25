@@ -569,6 +569,7 @@ bl_summary |>
   geom_point(size = 3) +
   geom_vline(
     data = bl_summary    |>
+      filter(!(Project %in% c("K ST NW (2021)", "C ST NE (2023)"))) |>
       group_by(Outcome)  |>
       summarise(mean_change = mean(X..change, na.rm = TRUE), .groups = "drop"),
     aes(xintercept = mean_change, color = Outcome),
