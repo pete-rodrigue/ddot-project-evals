@@ -73,7 +73,7 @@ First let's look at some of the results from DDOT's detailed before-after analys
 ```{r plot_ddot_eval_data}
 # to_plot <-
   df %>%
-  filter(Outcome %in% c("Any Injury", "All Crashes", "Pedestrian Injury")) %>%
+  filter(Outcome %in% c("Injury Crashes", "All Crashes", "Pedestrian Injury")) %>%
   mutate(Change = Change*-1) %>%
   ggplot() +
   geom_bar(aes(x=`Project short name`, y=Change, fill=Outcome), stat="identity", position="dodge") +
@@ -81,7 +81,7 @@ First let's look at some of the results from DDOT's detailed before-after analys
   ggtitle("All projects saw decreases in crashes") +
   geom_hline(aes(yintercept=mean(Change[Outcome == "All Crashes"], na.rm=T)), 
              color="#F8766D", linetype="dashed", linewidth=.8, alpha=.5) +
-  geom_hline(aes(yintercept=mean(Change[Outcome == "Any Injury"], na.rm=T)), 
+  geom_hline(aes(yintercept=mean(Change[Outcome == "Injury Crashes"], na.rm=T)), 
              color="#00BA38", linetype="dashed", linewidth=.8, alpha=.5) +
   geom_hline(aes(yintercept=mean(Change[Outcome == "Pedestrian Injury"], na.rm=T)), 
              color="#619CFF", linetype="dashed", linewidth=.8, alpha=.5) +
@@ -119,7 +119,7 @@ rm(to_plot); rm(url)
 ```{r}
 outcome_vars <-
   c("All Crashes", "Vehicle Crashes", "Bike Crashes", "Pedestrian Crashes", 
-    "Any Injury", "Driver Injury", "Bicyclist Injury", "Pedestrian Injury",
+    "Injury Crashes", "Serious Injury Crashes", "Driver Injury", "Bicyclist Injury", "Pedestrian Injury",
     "Driver Serious Injury", "Bicyclist Serious Injury", "Pedestrian Serious Injury")
 
 
@@ -266,11 +266,11 @@ for (proj in unique(cd_in_projs_summed$project_name)) {
     eval_summary, 
     data.frame("Project" = rep(proj, 4), 
                "Source"  = c("This analysis", "This analysis", "DDOT", "DDOT"),
-               "Outcome" = rep(c("All Crashes", "Any Injury"), 2), 
+               "Outcome" = rep(c("All Crashes", "Injury Crashes"), 2), 
                "% change" = c(plot_table$pct_change[plot_table$series == "All Crashes"],
-                              plot_table$pct_change[plot_table$series == "Any Injury"],
+                              plot_table$pct_change[plot_table$series == "Injury Crashes"],
                               plot_table$pct_change_ddot[plot_table$series == "All Crashes"],
-                              plot_table$pct_change_ddot[plot_table$series == "Any Injury"])
+                              plot_table$pct_change_ddot[plot_table$series == "Injury Crashes"])
                )
   )
   
@@ -474,6 +474,8 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
   
   temp_df <- filter(cd_in_projs_summed, year >= 2016 & route_unique_id == proj)
   
+  temp_df$`Serious Injury Crashes` = temp_df$`Driver Serious Injury` + temp_df$`Pedestrian Serious Injury` + temp_df$`Bicyclist Serious Injury`
+  
   proj_year <- unique(temp_df$min_install)
   if(proj_year < 2017) {next}
   if (temp_df$route_unique_id[1] %in% already_shown) {next}
@@ -523,9 +525,9 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
   bl_summary <- bind_rows(
     bl_summary, 
     data.frame("Project" = rep(proj, 2), 
-               "Outcome" = c("All Crashes", "Any Injury"), 
+               "Outcome" = c("All Crashes", "Injury Crashes"), 
                "% change" = c(plot_table$`% change`[plot_table$Outcome == "All Crashes"],
-                              plot_table$`% change`[plot_table$Outcome == "Any Injury"])
+                              plot_table$`% change`[plot_table$Outcome == "Injury Crashes"])
                )
   )
 }
@@ -738,13 +740,13 @@ crashes_near_subblocks_filled <- crashes_near_subblocks |>
 Here are the changes in means across different variables. The bike lane streets start from a higher level of crashes and, with the exception of bike crashes, see a bigger drop in crashes. (This is likely due to a large increase in bike traffic).
 
 ```{r, fig.width=12, fig.height=8}
-crash_vars_to_plot <- c("Total Crashes per 800 meters", "Any Injury per 800 meters", 
+crash_vars_to_plot <- c("Total Crashes per 800 meters", "Injury Crashes per 800 meters", 
                          "Vehicle Crashes per 800 meters", "Driver Injury per 800 meters",
                          "Pedestrian Crashes per 800 meters", "Pedestrian Injury per 800 meters",
                         "Bike Crashes per 800 meters", "Bicyclist Injury per 800 meters")
 
 panel_pairs <- list(
-  "Overall"     = list(total = "Total Crashes per 800 meters",    injury = "Any Injury per 800 meters"),
+  "Overall"     = list(total = "Total Crashes per 800 meters",    injury = "Injury Crashes per 800 meters"),
   "People driving"      = list(total = "Vehicle Crashes per 800 meters",  injury = "Driver Injury per 800 meters"),
   "People walking"  = list(total = "Pedestrian Crashes per 800 meters", injury = "Pedestrian Injury per 800 meters"),
   "People bicycling"        = list(total = "Bike Crashes per 800 meters",     injury = "Bicyclist Injury per 800 meters")
@@ -1008,7 +1010,7 @@ ggplotly(ecdf) %>% layout(hovermode = "x")
 #   crashes_near_subblocks_filled |>
 #   mutate(treated = if_else(is.na(build_year), "Other streets", "Bike lane streets")) |>
 #   mutate(post    = if_else(post == 1, "2. After", "1. Before")) |>
-#   ggplot(aes(x = `Any Injury per 800 meters`, color = treated)) +
+#   ggplot(aes(x = `Injury Crashes per 800 meters`, color = treated)) +
 #   stat_ecdf(geom = "step") +
 #   scale_color_manual(values = c("Other streets" = "#b35806", "Bike lane streets" = "#542788")) +
 #   labs(color = NULL) +

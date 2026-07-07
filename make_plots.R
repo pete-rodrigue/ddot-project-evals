@@ -98,13 +98,14 @@ plot_crashes_over_time <- function(data, smoothing_factor = 1,
                                    period_1 = NULL, period_2 = NULL,
                                    title = NULL) {
   
-  series_levels <- c("All Crashes", "Any Injury",
+  series_levels <- c("All Crashes", "Injury Crashes", "Serious Injury Crashes",
                      "Vehicle Crashes", "Bike Crashes",      "Pedestrian Crashes",
                      "Driver Injury",   "Bicyclist Injury",  "Pedestrian Injury")
   
   series_colors <- c(
     "All Crashes"        = "#636363",
-    "Any Injury"         = "#bdbdbd",
+    "Injury Crashes"         = "#bdbdbd",
+    "Serious Injury Crashes" = "#bdbdbd",
     "Vehicle Crashes"    = "#2166ac",
     "Driver Injury"      = "#74add1",
     "Bike Crashes"       = "#1a7837",
@@ -115,7 +116,8 @@ plot_crashes_over_time <- function(data, smoothing_factor = 1,
   
   panel_map <- c(
     "All Crashes"        = "Overall",
-    "Any Injury"         = "Overall",
+    "Injury Crashes"     = "Overall",
+    "Serious Injury Crashes"     = "Overall",
     "Vehicle Crashes"    = "Vehicle",
     "Driver Injury"      = "Vehicle",
     "Bike Crashes"       = "Bike",
