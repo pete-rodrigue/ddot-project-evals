@@ -120,7 +120,8 @@ rm(to_plot); rm(url)
 outcome_vars <-
   c("All Crashes", "Vehicle Crashes", "Bike Crashes", "Pedestrian Crashes", 
     "Injury Crashes", "Serious Injury Crashes", "Driver Injury", "Bicyclist Injury", "Pedestrian Injury",
-    "Driver Serious Injury", "Bicyclist Serious Injury", "Pedestrian Serious Injury")
+    "Driver Serious Injury", "Bicyclist Serious Injury", "Pedestrian Serious Injury",
+    "Fatal Crashes")
 
 
 # load crash data:
@@ -256,7 +257,11 @@ for (proj in unique(cd_in_projs_summed$project_name)) {
   
   plot_table <-
     rvs[[3]] %>% 
-      dplyr::left_join(select(df, `Project name`, Outcome, Change) %>% filter(`Project name` == proj), by=c("series"="Outcome")) %>%
+      dplyr::left_join(
+        select(df, `Project name`, Outcome, Change) %>% 
+          filter(`Project name` == proj) %>%
+          mutate(Outcome = if_else(Outcome == "Any Injury", "Injury Crashes", Outcome)), 
+        by=c("series"="Outcome")) %>%
       rename(pct_change_ddot = Change) %>%
       select(-`Project name`) 
   
@@ -468,7 +473,7 @@ already_shown <- c("21ST ST NW (2022)", "9TH ST NW (2023)", "G ST NW (2020)",  "
 
 
 ```{r}
-bl_summary <- data.frame("Project" = NA, "Outcome" = NA, "% change" = NA, "MM change" = NA)
+bl_summary <- data.frame("Project" = NA, "Outcome" = NA, "% change" = NA, "MM change" = NA, "Before" = NA, "After" = NA)
 bl_objs    <- list()
 for (proj in unique(cd_in_projs_summed$route_unique_id)) {  
   
@@ -478,7 +483,7 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
   
   proj_year <- unique(temp_df$min_install)
   if(proj_year < 2017) {next}
-  if (temp_df$route_unique_id[1] %in% already_shown) {next}
+  # if (temp_df$route_unique_id[1] %in% already_shown) {next}
   
   if (proj_year < 2020) {
     p1sy = 2016; p1ey = proj_year - 1; p2sy = 2024; p2ey = 2025
@@ -524,14 +529,59 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
   
   bl_summary <- bind_rows(
     bl_summary, 
-    data.frame("Project" = rep(proj, 2), 
-               "Outcome" = c("All Crashes", "Injury Crashes"), 
+    data.frame("Project" = rep(proj, 4), 
+               "Outcome" = c("All Crashes", "Injury Crashes", "Serious Injury Crashes", "Fatal Crashes"), 
                "% change" = c(plot_table$`% change`[plot_table$Outcome == "All Crashes"],
-                              plot_table$`% change`[plot_table$Outcome == "Injury Crashes"])
+                              plot_table$`% change`[plot_table$Outcome == "Injury Crashes"],
+                              plot_table$`% change`[plot_table$Outcome == "Serious Injury Crashes"],
+                              plot_table$`% change`[plot_table$Outcome == "Fatal Crashes"]),
+               "Before"   = c(plot_table$`Before, per month`[plot_table$Outcome == "All Crashes"],
+                              plot_table$`Before, per month`[plot_table$Outcome == "Injury Crashes"],
+                              plot_table$`Before, per month`[plot_table$Outcome == "Serious Injury Crashes"],
+                              plot_table$`Before, per month`[plot_table$Outcome == "Fatal Crashes"]),
+               "After"    = c(plot_table$`After, per month`[plot_table$Outcome == "All Crashes"],
+                              plot_table$`After, per month`[plot_table$Outcome == "Injury Crashes"],
+                              plot_table$`After, per month`[plot_table$Outcome == "Serious Injury Crashes"],
+                              plot_table$`After, per month`[plot_table$Outcome == "Fatal Crashes"])
                )
   )
 }
+
+
 bl_summary <- bl_summary[!is.na(bl_summary$Outcome),]
+
+to_show_1 <-
+  bl_summary %>%
+  group_by(Outcome) %>%
+  summarise(
+    before_per_year  = sum(Before, na.rm=T)*12,
+    after_per_year   = sum(After, na.rm=T)*12,
+    mean_pct_change       = mean(`X..change`, na.rm=T),
+    pooled_pct_change = (after_per_year - before_per_year) / before_per_year
+  )
+
+
+
+before <- setNames(to_show_1$before_per_year, to_show_1$Outcome)
+after  <- setNames(to_show_1$after_per_year,  to_show_1$Outcome)
+
+to_show_2 <- tribble(
+  ~Outcome,                     ~before_per_year,                                                  ~after_per_year,
+  "Property Destruction Only",  before["All Crashes"] - before["Injury Crashes"] - before["Fatal Crashes"], after["All Crashes"] - after["Injury Crashes"] - after["Fatal Crashes"],
+  "Fatal Crashes",              before["Fatal Crashes"],                                                after["Fatal Crashes"],
+  "More Minor Injury Crashes",  before["Injury Crashes"] - before["Serious Injury Crashes"],             after["Injury Crashes"] - after["Serious Injury Crashes"],
+  "Serious Injury Crashes",     before["Serious Injury Crashes"],                                        after["Serious Injury Crashes"]
+)
+
+to_show_1
+to_show_2 %>% mutate(reduction = after_per_year - before_per_year)
+
+
+bl_summary <-
+  bl_summary %>%
+  select(-Before, -After) %>%
+  filter((Outcome != "Serious Injury Crashes") & (Outcome != "Fatal Crashes")) %>%
+  filter(!(Project %in% already_shown))
 ```
 
 
@@ -562,6 +612,8 @@ bl_summary |>
   ) +
   ggtitle("These projects lead to massive declines in crashes")
 ```
+
+
 ```{r, fig.height=8, fig.width=10}
 bl_summary |>
   mutate(Project = reorder(Project, -X..change)) |>

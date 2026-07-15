@@ -35,14 +35,15 @@ load_crash_data <- function() {
     mutate(
            date                = make_date(year, month, day = 1L),
           `Injury Crashes`     = MAJORINJURIES_BICYCLIST    + MINORINJURIES_BICYCLIST   +
-                                 UNKNOWNINJURIES_BICYCLIST  + FATAL_BICYCLIST           +
+                                 UNKNOWNINJURIES_BICYCLIST                              +
                                  MAJORINJURIES_DRIVER       + MINORINJURIES_DRIVER      +
-                                 UNKNOWNINJURIES_DRIVER     + FATAL_DRIVER              +
+                                 UNKNOWNINJURIES_DRIVER                                 +
                                  MAJORINJURIES_PEDESTRIAN   + MINORINJURIES_PEDESTRIAN  +
-                                 UNKNOWNINJURIES_PEDESTRIAN + FATAL_PEDESTRIAN,
-          `Serious Injury Crashes`    = MAJORINJURIES_BICYCLIST   + FATAL_BICYCLIST    +
-                                        MAJORINJURIES_DRIVER       + FATAL_DRIVER      +
-                                        MAJORINJURIES_PEDESTRIAN   + FATAL_PEDESTRIAN,
+                                 UNKNOWNINJURIES_PEDESTRIAN,
+          `Serious Injury Crashes`    = MAJORINJURIES_BICYCLIST  +
+                                        MAJORINJURIES_DRIVER     +
+                                        MAJORINJURIES_PEDESTRIAN,
+          `Fatal Crashes`      = FATAL_DRIVER + FATAL_PEDESTRIAN + FATAL_BICYCLIST,
           `Vehicle Crashes`    = if_else(TOTAL_VEHICLES     > 0, 1, 0),
           `Bike Crashes`       = if_else(TOTAL_BICYCLES     > 0, 1, 0),
           `Pedestrian Crashes` = if_else(TOTAL_PEDESTRIANS  > 0, 1, 0),
