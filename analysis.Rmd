@@ -92,8 +92,8 @@ First let's look at some of the results from DDOT's detailed before-after analys
 to_plot <-
   df %>%
   filter(str_detect(Outcome, "Private motor vehicle")) %>%
-  group_by(`Project short name`, Outcome) %>%
-  summarize(change = mean(Change, na.rm=T)) %>%
+  dplyr::group_by(`Project short name`, Outcome) %>%
+  dplyr::summarize(change = mean(Change, na.rm=T)) %>%
   ungroup() %>%
   mutate(Outcome = ifelse(Outcome == "Private motor vehicle AM peak travel time (seconds)", 
                           "AM traffic travel time",
@@ -148,10 +148,10 @@ get_crashes_in_corridors <- function(line_sf, crashes_sf, buffer_in_meters) {
 }
 
 group_corridor_crashes_by_month <- function(df, group_by_vars = NA, outcome_vars) {
-    df                                      |>
-    st_drop_geometry()                      |>
-    group_by(across(all_of(group_by_vars))) |>
-    summarize(
+    df                                             |>
+    st_drop_geometry()                             |>
+    dplyr::group_by(across(all_of(group_by_vars))) |>
+    dplyr::summarize(
       `All Crashes` = n(),
       across(all_of(outcome_vars), \(x) sum(x, na.rm = TRUE)),
       .groups = "drop_last"
@@ -513,7 +513,7 @@ for (proj in unique(cd_in_projs_summed$route_unique_id)) {
   
   mm_data <- 
     filter(bl_subblock_trips, route_unique_id==proj)                     |> 
-    summarize(mean_2019_trips  = round(mean(mean_2019_trips , na.rm=T)), 
+    dplyr::summarize(mean_2019_trips  = round(mean(mean_2019_trips , na.rm=T)), 
               mean_24_25_trips = round(mean(mean_24_25_trips, na.rm=T))) |>
     mutate(mm_increase     = mean_24_25_trips - mean_2019_trips,
            mm_pct_increase = round(100*(mean_24_25_trips - mean_2019_trips) / mean_2019_trips))
