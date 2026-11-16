@@ -588,12 +588,14 @@ bl_summary <-
 
 ```{r, fig.height=8, fig.width=10}
 bl_summary |>
+  filter(!(Outcome %in% c("Serious Injury Crashes", "Fatal Crashes"))) |>
   mutate(Project = reorder(Project, -X..change)) |>
   ggplot(aes(x = X..change, y = Project, color = Outcome)) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5) +
   geom_point(size = 3) +
   geom_vline(
     data = bl_summary    |>
+      filter(!(Outcome %in% c("Serious Injury Crashes", "Fatal Crashes"))) |>
       group_by(Outcome)  |>
       summarise(mean_change = mean(X..change, na.rm = TRUE), .groups = "drop"),
     aes(xintercept = mean_change, color = Outcome),
